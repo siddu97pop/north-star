@@ -1,20 +1,30 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   FlatList,
-  TextInput,
   Modal,
-  Platform,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
 import type { CalendarEvent } from '@/lib/types';
+
+type Visibility = CalendarEvent['visibility'];
+
+const VISIBILITIES: Visibility[] = ['private', 'family', 'public'];
+const RECURRENCE_OPTIONS = [
+  { label: 'Once', value: null },
+  { label: 'Daily', value: 'FREQ=DAILY' },
+  { label: 'Weekly', value: 'FREQ=WEEKLY' },
+  { label: 'Monthly', value: 'FREQ=MONTHLY' },
+];
 
 export default function CalendarScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
@@ -32,6 +42,8 @@ export default function CalendarScreen() {
   const [startMin, setStartMin] = useState('00');
   const [endHour, setEndHour] = useState('20');
   const [endMin, setEndMin] = useState('00');
+  const [visibility, setVisibility] = useState<Visibility>('private');
+  const [recurrence, setRecurrence] = useState<string | null>(null);
 
   const loadEvents = useCallback(async () => {
     if (!user) return;
@@ -48,17 +60,19 @@ export default function CalendarScreen() {
       .order('start_at');
 
     if (data) setEvents(data);
-  }, [user, selectedDate]);
+  }, [selectedDate, user]);
 
-  useEffect(() => { loadEvents(); }, [loadEvents]);
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
 
   async function handleCreate() {
     if (!user || !title.trim()) return;
 
     const startAt = new Date(selectedDate);
-    startAt.setHours(parseInt(startHour), parseInt(startMin), 0, 0);
+    startAt.setHours(parseInt(startHour || '0', 10), parseInt(startMin || '0', 10), 0, 0);
     const endAt = new Date(selectedDate);
-    endAt.setHours(parseInt(endHour), parseInt(endMin), 0, 0);
+    endAt.setHours(parseInt(endHour || '0', 10), parseInt(endMin || '0', 10), 0, 0);
 
     await supabase.from('lifeos_events').insert({
       owner_id: user.id,
@@ -67,11 +81,16 @@ export default function CalendarScreen() {
       location: location.trim() || null,
       start_at: startAt.toISOString(),
       end_at: endAt.toISOString(),
+      visibility,
+      rrule: recurrence,
+      metadata: recurrence ? { recurrence_label: RECURRENCE_OPTIONS.find((option) => option.value === recurrence)?.label } : {},
     });
 
     setTitle('');
     setDescription('');
     setLocation('');
+    setVisibility('private');
+    setRecurrence(null);
     setShowCreate(false);
     loadEvents();
   }
@@ -85,10 +104,21 @@ export default function CalendarScreen() {
   }
 
   function navigateMonth(delta: number) {
-    const d = new Date(selectedDate);
-    d.setMonth(d.getMonth() + delta);
-    d.setDate(1);
-    setSelectedDate(d);
+    const next = new Date(selectedDate);
+    next.setMonth(next.getMonth() + delta);
+    next.setDate(1);
+    setSelectedDate(next);
+  }
+
+  function formatRecurrence(event: CalendarEvent) {
+    if (!event.rrule) return null;
+    if (event.metadata && typeof event.metadata.recurrence_label === 'string') {
+      return event.metadata.recurrence_label;
+    }
+    if (event.rrule.includes('DAILY')) return 'Daily';
+    if (event.rrule.includes('WEEKLY')) return 'Weekly';
+    if (event.rrule.includes('MONTHLY')) return 'Monthly';
+    return 'Repeats';
   }
 
   const { firstDay, daysInMonth } = getDaysInMonth(selectedDate);
@@ -96,7 +126,6 @@ export default function CalendarScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Month header */}
       <View style={styles.monthHeader}>
         <TouchableOpacity onPress={() => navigateMonth(-1)}>
           <Text style={[styles.navArrow, { color: colors.tint }]}>{'<'}</Text>
@@ -109,24 +138,26 @@ export default function CalendarScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Day names */}
       <View style={styles.weekRow}>
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <Text key={i} style={[styles.dayName, { color: colors.textSecondary }]}>{d}</Text>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day) => (
+          <Text key={day} style={[styles.dayName, { color: colors.textSecondary }]}>
+            {day}
+          </Text>
         ))}
       </View>
 
-      {/* Calendar grid */}
       <View style={styles.calendarGrid}>
-        {Array.from({ length: firstDay }).map((_, i) => (
-          <View key={`empty-${i}`} style={styles.dayCell} />
+        {Array.from({ length: firstDay }).map((_, index) => (
+          <View key={`empty-${index}`} style={styles.dayCell} />
         ))}
-        {Array.from({ length: daysInMonth }).map((_, i) => {
-          const day = i + 1;
+        {Array.from({ length: daysInMonth }).map((_, index) => {
+          const day = index + 1;
           const isSelected = day === selectedDate.getDate();
-          const isToday = day === today.getDate() &&
+          const isToday =
+            day === today.getDate() &&
             selectedDate.getMonth() === today.getMonth() &&
             selectedDate.getFullYear() === today.getFullYear();
+
           return (
             <TouchableOpacity
               key={day}
@@ -135,16 +166,18 @@ export default function CalendarScreen() {
                 isSelected && { backgroundColor: brand.primary, borderRadius: 20 },
               ]}
               onPress={() => {
-                const d = new Date(selectedDate);
-                d.setDate(day);
-                setSelectedDate(d);
+                const next = new Date(selectedDate);
+                next.setDate(day);
+                setSelectedDate(next);
               }}
             >
-              <Text style={[
-                styles.dayText,
-                { color: isSelected ? '#fff' : isToday ? brand.accent : colors.text },
-                isToday && !isSelected && { fontWeight: '700' },
-              ]}>
+              <Text
+                style={[
+                  styles.dayText,
+                  { color: isSelected ? '#fff' : isToday ? brand.accent : colors.text },
+                  isToday && !isSelected && { fontWeight: '700' },
+                ]}
+              >
                 {day}
               </Text>
             </TouchableOpacity>
@@ -152,43 +185,55 @@ export default function CalendarScreen() {
         })}
       </View>
 
-      {/* Events list */}
       <View style={styles.eventsSection}>
         <View style={styles.eventHeader}>
-          <Text style={[styles.eventsTitle, { color: colors.text }]}>
-            {selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-          </Text>
-          <TouchableOpacity
-            style={[styles.addBtn, { backgroundColor: brand.primary }]}
-            onPress={() => setShowCreate(true)}
-          >
+          <View>
+            <Text style={[styles.eventsTitle, { color: colors.text }]}>
+              {selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            </Text>
+            <Text style={[styles.eventsSubtitle, { color: colors.textSecondary }]}>
+              Phase 3 adds recurrence, visibility, and attendee invites.
+            </Text>
+          </View>
+          <TouchableOpacity style={[styles.addBtn, { backgroundColor: brand.primary }]} onPress={() => setShowCreate(true)}>
             <Text style={styles.addBtnText}>+ Event</Text>
           </TouchableOpacity>
         </View>
 
         <FlatList
           data={events}
-          keyExtractor={e => e.id}
+          keyExtractor={(event) => event.id}
           renderItem={({ item }) => (
-            <View style={[styles.eventRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+            <TouchableOpacity
+              style={[styles.eventRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
+              onPress={() => router.push(`/event/${item.id}`)}
+            >
               <View style={[styles.eventDot, { backgroundColor: item.color ?? brand.primary }]} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.eventTitle, { color: colors.text }]}>{item.title}</Text>
                 <Text style={[styles.eventTime, { color: colors.textSecondary }]}>
-                  {item.all_day ? 'All day' :
-                    `${new Date(item.start_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${new Date(item.end_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                  {item.all_day
+                    ? 'All day'
+                    : `${new Date(item.start_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${new Date(item.end_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                   {item.location ? ` · ${item.location}` : ''}
                 </Text>
+                <View style={styles.metaRow}>
+                  <Text style={[styles.metaChip, { color: colors.textSecondary, borderColor: colors.surfaceBorder }]}>
+                    {item.visibility}
+                  </Text>
+                  {formatRecurrence(item) ? (
+                    <Text style={[styles.metaChip, { color: colors.textSecondary, borderColor: colors.surfaceBorder }]}>
+                      {formatRecurrence(item)}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
-            </View>
+            </TouchableOpacity>
           )}
-          ListEmptyComponent={
-            <Text style={[styles.empty, { color: colors.textSecondary }]}>No events</Text>
-          }
+          ListEmptyComponent={<Text style={[styles.empty, { color: colors.textSecondary }]}>No events</Text>}
         />
       </View>
 
-      {/* Create event modal */}
       <Modal visible={showCreate} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <ScrollView style={[styles.modalContent, { backgroundColor: colors.surface }]}>
@@ -265,6 +310,56 @@ export default function CalendarScreen() {
               </View>
             </View>
 
+            <Text style={[styles.label, { color: colors.textSecondary, marginTop: 18 }]}>Visibility</Text>
+            <View style={styles.optionRow}>
+              {VISIBILITIES.map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.optionChip,
+                    { borderColor: colors.surfaceBorder },
+                    visibility === option && { backgroundColor: brand.primary, borderColor: brand.primary },
+                  ]}
+                  onPress={() => setVisibility(option)}
+                >
+                  <Text
+                    style={[
+                      styles.optionChipText,
+                      { color: colors.textSecondary },
+                      visibility === option && { color: '#fff' },
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.label, { color: colors.textSecondary, marginTop: 18 }]}>Recurrence</Text>
+            <View style={styles.optionRow}>
+              {RECURRENCE_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.label}
+                  style={[
+                    styles.optionChip,
+                    { borderColor: colors.surfaceBorder },
+                    recurrence === option.value && { backgroundColor: brand.primary, borderColor: brand.primary },
+                  ]}
+                  onPress={() => setRecurrence(option.value)}
+                >
+                  <Text
+                    style={[
+                      styles.optionChipText,
+                      { color: colors.textSecondary },
+                      recurrence === option.value && { color: '#fff' },
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalBtn, { borderColor: colors.surfaceBorder, borderWidth: 1 }]}
@@ -272,10 +367,7 @@ export default function CalendarScreen() {
               >
                 <Text style={{ color: colors.text }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: brand.primary }]}
-                onPress={handleCreate}
-              >
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: brand.primary }]} onPress={handleCreate}>
                 <Text style={{ color: '#fff', fontWeight: '600' }}>Create</Text>
               </TouchableOpacity>
             </View>
@@ -297,17 +389,20 @@ const styles = StyleSheet.create({
   dayCell: { width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
   dayText: { fontSize: 14 },
   eventsSection: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
-  eventHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  eventHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 },
   eventsTitle: { fontSize: 16, fontWeight: '600' },
+  eventsSubtitle: { fontSize: 12, marginTop: 4 },
   addBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   eventRow: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 10, borderWidth: 1, marginBottom: 8 },
   eventDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
   eventTitle: { fontSize: 15, fontWeight: '500' },
   eventTime: { fontSize: 13, marginTop: 2 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  metaChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, fontSize: 11, overflow: 'hidden' },
   empty: { fontSize: 14, textAlign: 'center', marginTop: 20 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, maxHeight: '80%' },
+  modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, maxHeight: '85%' },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 20 },
   label: { fontSize: 13, fontWeight: '500', marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, marginBottom: 16 },
@@ -316,6 +411,9 @@ const styles = StyleSheet.create({
   timeGroup: { flex: 1 },
   timeInputs: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   timeInput: { borderWidth: 1, borderRadius: 8, width: 48, height: 44, textAlign: 'center', fontSize: 16 },
+  optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  optionChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  optionChipText: { fontSize: 13, fontWeight: '600', textTransform: 'capitalize' },
   modalActions: { flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 40 },
   modalBtn: { flex: 1, height: 48, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
 });

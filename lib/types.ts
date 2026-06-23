@@ -29,6 +29,18 @@ export interface CalendarEvent {
   updated_at: string;
 }
 
+export interface EventAttendee {
+  id: string;
+  event_id: string;
+  user_id: string | null;
+  email: string | null;
+  name: string | null;
+  rsvp_status: 'pending' | 'accepted' | 'declined' | 'tentative';
+  invite_token: string | null;
+  invited_at: string;
+  responded_at: string | null;
+}
+
 export interface VoiceNote {
   id: string;
   user_id: string;
@@ -107,4 +119,18 @@ export interface InteractionStat {
   this_year: number;
   all_time: number;
   last_seen: string | null;
+}
+
+export interface InviteRecord {
+  id: string;
+  invited_by: string;
+  email: string;
+  name: string | null;
+  invite_type: 'app' | 'event';
+  event_id: string | null;
+  token: string;
+  status: 'sent' | 'opened' | 'accepted' | 'expired';
+  sent_at: string;
+  accepted_at: string | null;
+  expires_at: string;
 }
