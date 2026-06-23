@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Audio } from 'expo-av';
+import * as Crypto from 'expo-crypto';
+import { File } from 'expo-file-system';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -90,15 +92,14 @@ export default function RecordScreen() {
     if (!uri) return;
     setUploading(true);
 
-    const noteId = crypto.randomUUID();
+    const noteId = Crypto.randomUUID();
     const storagePath = `${user.id}/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, '0')}/${noteId}.m4a`;
-
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    const file = new File(uri);
+    const audioData = await file.arrayBuffer();
 
     const { error: uploadError } = await supabase.storage
       .from('lifeos-audio')
-      .upload(storagePath, blob, { contentType: 'audio/mp4' });
+      .upload(storagePath, audioData, { contentType: 'audio/mp4' });
 
     if (uploadError) {
       console.error('Upload failed:', uploadError);

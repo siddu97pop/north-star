@@ -10,7 +10,7 @@ import {
   Modal,
   ScrollView,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -44,6 +44,12 @@ export default function PeopleScreen() {
   }, [user]);
 
   useEffect(() => { loadPeople(); }, [loadPeople]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPeople();
+    }, [loadPeople])
+  );
 
   async function onRefresh() {
     setRefreshing(true);
@@ -148,6 +154,7 @@ export default function PeopleScreen() {
           </View>
         }
         contentContainerStyle={styles.listContent}
+        alwaysBounceVertical
       />
 
       {/* Add person modal */}
@@ -241,7 +248,7 @@ const styles = StyleSheet.create({
   },
   addBtn: { width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   addBtnText: { color: '#fff', fontSize: 22, fontWeight: '600' },
-  listContent: { paddingHorizontal: 16, paddingBottom: 40 },
+  listContent: { paddingHorizontal: 16, paddingBottom: 40, flexGrow: 1 },
   personRow: {
     flexDirection: 'row',
     alignItems: 'center',
