@@ -29,6 +29,7 @@ export default function EventDetail() {
   const [attendees, setAttendees] = useState<EventAttendee[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
@@ -64,9 +65,11 @@ export default function EventDetail() {
 
   async function handleAddAttendee() {
     if (!newEmail.trim() && !newName.trim()) return;
+    if (saving) return;
+    setSaving(true);
 
     const inviteToken = Crypto.randomUUID().replace(/-/g, '');
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('lifeos_event_attendees')
       .insert({
         event_id: id,
@@ -77,19 +80,45 @@ export default function EventDetail() {
       .select('*')
       .single();
 
-    if (data) {
-      setAttendees((prev) => [...prev, data]);
-    }
-
+    setSaving(false);
     setNewName('');
     setNewEmail('');
     setShowAdd(false);
+
+    if (error) {
+      Alert.alert('Error', 'Failed to add attendee');
+      return;
+    }
+
+    if (data) {
+      setAttendees((prev) => [...prev, data]);
+      handleSendInvite(data);
+    }
+  }
+
+  async function handleRemoveAttendee(attendee: EventAttendee) {
+    Alert.alert(
+      'Remove Attendee',
+      `Remove ${attendee.name ?? attendee.email ?? 'this attendee'}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.from('lifeos_event_attendees').delete().eq('id', attendee.id);
+            setAttendees((prev) => prev.filter((a) => a.id !== attendee.id));
+          },
+        },
+      ]
+    );
   }
 
   async function handleSendInvite(attendee: EventAttendee) {
     setSendingId(attendee.id);
 
     try {
+      if (!session) throw new Error('Please sign in again');
       const result = await sendEventInvite({ eventId: id, attendeeId: attendee.id }, session);
       Alert.alert(
         result.delivery === 'sent' ? 'Invite Sent' : 'Invite Prepared',
@@ -174,7 +203,7 @@ export default function EventDetail() {
             <View>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Attendees</Text>
               <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
-                Add people now, then send RSVP links from the companion API.
+                Invites are sent automatically when you add an attendee.
               </Text>
             </View>
             <TouchableOpacity style={[styles.addBtn, { backgroundColor: brand.primary }]} onPress={() => setShowAdd(true)}>
@@ -197,17 +226,22 @@ export default function EventDetail() {
                     {attendee.rsvp_status}
                   </Text>
                 </View>
-                {attendee.email ? (
+                {sendingId === attendee.id ? (
+                  <ActivityIndicator size="small" color={brand.primary} style={{ marginRight: 8 }} />
+                ) : (
                   <TouchableOpacity
                     style={[styles.inviteBtn, { borderColor: colors.surfaceBorder }]}
                     onPress={() => handleSendInvite(attendee)}
-                    disabled={sendingId === attendee.id}
                   >
-                    <Text style={{ color: colors.text, fontWeight: '600' }}>
-                      {sendingId === attendee.id ? 'Sending...' : 'Send Invite'}
-                    </Text>
+                    <Text style={{ color: colors.text, fontWeight: '600' }}>Resend</Text>
                   </TouchableOpacity>
-                ) : null}
+                )}
+                <TouchableOpacity
+                  style={styles.removeBtn}
+                  onPress={() => handleRemoveAttendee(attendee)}
+                >
+                  <Text style={{ color: brand.danger, fontSize: 18, fontWeight: '600' }}>✕</Text>
+                </TouchableOpacity>
               </View>
             ))
           )}
@@ -250,8 +284,12 @@ export default function EventDetail() {
               >
                 <Text style={{ color: colors.text }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: brand.primary }]} onPress={handleAddAttendee}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: brand.primary, opacity: saving ? 0.6 : 1 }]}
+                onPress={handleAddAttendee}
+                disabled={saving}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{saving ? 'Adding...' : 'Add & Send Invite'}</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -280,6 +318,7 @@ const styles = StyleSheet.create({
   attendeeName: { fontSize: 15, fontWeight: '600' },
   attendeeMeta: { fontSize: 13, marginTop: 3 },
   inviteBtn: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  removeBtn: { padding: 8, marginLeft: 4 },
   empty: { fontSize: 14 },
   deleteBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 24 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
