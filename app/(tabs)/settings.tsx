@@ -24,6 +24,13 @@ interface UpcomingEvent extends CalendarEvent {
   attendees: EventAttendee[];
 }
 
+interface PendingUser {
+  id: string;
+  display_name: string;
+  email?: string;
+  created_at: string;
+}
+
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
   const colors = Colors[colorScheme];
@@ -33,6 +40,10 @@ export default function SettingsScreen() {
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sendingInvite, setSendingInvite] = useState<string | null>(null);
+
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [managingUser, setManagingUser] = useState<string | null>(null);
 
   const loadUpcomingEvents = useCallback(async () => {
     if (!user) return;
@@ -68,10 +79,74 @@ export default function SettingsScreen() {
 
   useEffect(() => { loadUpcomingEvents(); }, [loadUpcomingEvents]);
 
+  const loadPendingUsers = useCallback(async () => {
+    if (profile?.role !== 'admin') return;
+    setLoadingPending(true);
+    const { data } = await supabase
+      .from('lifeos_profiles')
+      .select('id, display_name, created_at')
+      .eq('role', 'pending')
+      .order('created_at', { ascending: true });
+    setPendingUsers(data ?? []);
+    setLoadingPending(false);
+  }, [profile?.role]);
+
+  useEffect(() => { loadPendingUsers(); }, [loadPendingUsers]);
+
   async function onRefresh() {
     setRefreshing(true);
-    await loadUpcomingEvents();
+    await Promise.all([loadUpcomingEvents(), loadPendingUsers()]);
     setRefreshing(false);
+  }
+
+  async function handleApprove(pendingUser: PendingUser) {
+    Alert.alert(
+      `Approve ${pendingUser.display_name}`,
+      'Choose a role for this user:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Family', onPress: () => submitManage(pendingUser.id, 'approve', 'family') },
+        { text: 'Friend', onPress: () => submitManage(pendingUser.id, 'approve', 'friend') },
+        { text: 'Member', onPress: () => submitManage(pendingUser.id, 'approve', 'member') },
+      ]
+    );
+  }
+
+  async function handleReject(pendingUser: PendingUser) {
+    Alert.alert(
+      'Reject user',
+      `Remove ${pendingUser.display_name}'s account permanently?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: () => submitManage(pendingUser.id, 'reject'),
+        },
+      ]
+    );
+  }
+
+  async function submitManage(userId: string, action: 'approve' | 'reject', role?: string) {
+    if (!session) return;
+    setManagingUser(userId);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/manage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ action, userId, role }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Request failed');
+      setPendingUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setManagingUser(null);
+    }
   }
 
   async function handleSendInvite(eventId: string, attendee: EventAttendee) {
@@ -107,8 +182,10 @@ export default function SettingsScreen() {
   }
 
   async function handleShareApp() {
+    const joinUrl = `${API_URL}/join`;
     await Share.share({
-      message: 'Check out Life OS — a personal relationship and life management app. https://lifeos.lexitools.tech',
+      message: `Join Life OS — sign up here: ${joinUrl}`,
+      url: joinUrl,
     });
   }
 
@@ -146,6 +223,64 @@ export default function SettingsScreen() {
           </View>
         </View>
       </View>
+
+      {/* Pending Users — admin only */}
+      {profile?.role === 'admin' && (
+        <>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>PENDING USERS</Text>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+            {loadingPending ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color={colors.tint} />
+              </View>
+            ) : pendingUsers.length === 0 ? (
+              <View style={styles.emptyInvites}>
+                <Text style={[styles.menuSub, { color: colors.textSecondary }]}>No pending sign-ups</Text>
+              </View>
+            ) : (
+              pendingUsers.map((pu, idx) => (
+                <View
+                  key={pu.id}
+                  style={[
+                    styles.pendingRow,
+                    idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.surfaceBorder },
+                  ]}
+                >
+                  <View style={[styles.accountAvatar, { backgroundColor: brand.warning + '22' }]}>
+                    <Text style={[styles.accountAvatarText, { color: brand.warning }]}>
+                      {pu.display_name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.pendingInfo}>
+                    <Text style={[styles.menuLabel, { color: colors.text }]}>{pu.display_name}</Text>
+                    <Text style={[styles.menuSub, { color: colors.textSecondary }]}>
+                      Joined {new Date(pu.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </Text>
+                  </View>
+                  {managingUser === pu.id ? (
+                    <ActivityIndicator size="small" color={colors.tint} />
+                  ) : (
+                    <View style={styles.pendingActions}>
+                      <TouchableOpacity
+                        style={[styles.approveBtn, { backgroundColor: brand.success + '22' }]}
+                        onPress={() => handleApprove(pu)}
+                      >
+                        <Text style={[styles.approveBtnText, { color: brand.success }]}>Approve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.rejectBtn, { borderColor: brand.danger + '44' }]}
+                        onPress={() => handleReject(pu)}
+                      >
+                        <Text style={[styles.rejectBtnText, { color: brand.danger }]}>Reject</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))
+            )}
+          </View>
+        </>
+      )}
 
       {/* Invite Links */}
       <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>INVITE LINKS</Text>
@@ -297,4 +432,11 @@ const styles = StyleSheet.create({
   sendBtnText: { fontSize: 12, fontWeight: '600' },
   signOutBtn: { marginTop: 24, borderWidth: 1, borderRadius: 12, padding: 14, alignItems: 'center' },
   signOutText: { fontSize: 15, fontWeight: '600' },
+  pendingRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  pendingInfo: { flex: 1 },
+  pendingActions: { flexDirection: 'row', gap: 8 },
+  approveBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  approveBtnText: { fontSize: 12, fontWeight: '700' },
+  rejectBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  rejectBtnText: { fontSize: 12, fontWeight: '600' },
 });

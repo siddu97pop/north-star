@@ -139,8 +139,8 @@ export default function CalendarScreen() {
       </View>
 
       <View style={styles.weekRow}>
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day) => (
-          <Text key={day} style={[styles.dayName, { color: colors.textSecondary }]}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+          <Text key={i} style={[styles.dayName, { color: colors.textSecondary }]}>
             {day}
           </Text>
         ))}
@@ -161,25 +161,30 @@ export default function CalendarScreen() {
           return (
             <TouchableOpacity
               key={day}
-              style={[
-                styles.dayCell,
-                isSelected && { backgroundColor: brand.primary, borderRadius: 20 },
-              ]}
+              style={styles.dayCell}
               onPress={() => {
                 const next = new Date(selectedDate);
                 next.setDate(day);
                 setSelectedDate(next);
               }}
             >
-              <Text
+              <View
                 style={[
-                  styles.dayText,
-                  { color: isSelected ? '#fff' : isToday ? brand.accent : colors.text },
-                  isToday && !isSelected && { fontWeight: '700' },
+                  styles.dayCircle,
+                  isSelected && styles.dayCircleSelected,
+                  isToday && !isSelected && { backgroundColor: colors.surfaceBorder },
                 ]}
               >
-                {day}
-              </Text>
+                <Text
+                  style={[
+                    styles.dayText,
+                    { color: isSelected ? '#fff' : isToday ? brand.accent : colors.text },
+                    isToday && !isSelected && { fontWeight: '700' },
+                  ]}
+                >
+                  {day}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -383,11 +388,13 @@ const styles = StyleSheet.create({
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 12 },
   navArrow: { fontSize: 22, fontWeight: '600', padding: 8 },
   monthTitle: { fontSize: 18, fontWeight: '600' },
-  weekRow: { flexDirection: 'row', paddingHorizontal: 10, marginTop: 12 },
-  dayName: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '600' },
-  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, marginTop: 4 },
-  dayCell: { width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
-  dayText: { fontSize: 14 },
+  weekRow: { flexDirection: 'row', paddingHorizontal: 10, marginTop: 12, marginBottom: 2 },
+  dayName: { width: '14.28%', textAlign: 'center', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, marginTop: 8 },
+  dayCell: { width: '14.28%', height: 44, justifyContent: 'center', alignItems: 'center' },
+  dayCircle: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  dayCircleSelected: { backgroundColor: brand.primary },
+  dayText: { fontSize: 14, textAlign: 'center' },
   eventsSection: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
   eventHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 },
   eventsTitle: { fontSize: 16, fontWeight: '600' },

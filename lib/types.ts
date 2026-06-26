@@ -3,7 +3,7 @@ export interface Profile {
   display_name: string;
   avatar_url: string | null;
   timezone: string;
-  role: 'admin' | 'family' | 'friend' | 'member';
+  role: 'admin' | 'family' | 'friend' | 'member' | 'pending';
   invited_by: string | null;
   expo_push_token: string | null;
   created_at: string;

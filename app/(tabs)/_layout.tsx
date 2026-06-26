@@ -1,23 +1,34 @@
 import { Redirect, Tabs } from 'expo-router';
-import { Text } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/lib/auth';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { brand } from '@/constants/Colors';
 
 function TabIcon({ icon, color }: { icon: string; color: string }) {
   return <Text style={{ fontSize: 22, color }}>{icon}</Text>;
 }
 
+const pendingStyles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  icon: { fontSize: 48, marginBottom: 20 },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: 12, textAlign: 'center' },
+  body: { fontSize: 15, lineHeight: 22, textAlign: 'center', marginBottom: 36 },
+  signOutBtn: { borderWidth: 1, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 32 },
+  signOutText: { fontSize: 15, fontWeight: '600' },
+});
+
 export default function TabLayout() {
   const colorScheme = useColorScheme() ?? 'dark';
-  const { session, loading } = useAuth();
+  const colors = Colors[colorScheme];
+  const { session, profile, loading, signOut } = useAuth();
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors[colorScheme].background }}>
-        <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator size="large" color={colors.tint} />
       </View>
     );
   }
@@ -26,19 +37,37 @@ export default function TabLayout() {
     return <Redirect href="/(auth)/login" />;
   }
 
+  if (profile?.role === 'pending') {
+    return (
+      <View style={[pendingStyles.container, { backgroundColor: colors.background }]}>
+        <Text style={pendingStyles.icon}>⏳</Text>
+        <Text style={[pendingStyles.title, { color: colors.text }]}>Pending Approval</Text>
+        <Text style={[pendingStyles.body, { color: colors.textSecondary ?? '#94A3B8' }]}>
+          Your account is waiting for admin approval. You&apos;ll get full access once you&apos;ve been approved.
+        </Text>
+        <TouchableOpacity
+          style={[pendingStyles.signOutBtn, { borderColor: brand.danger + '44' }]}
+          onPress={signOut}
+        >
+          <Text style={[pendingStyles.signOutText, { color: brand.danger }]}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        tabBarInactiveTintColor: Colors[colorScheme].tabIconDefault,
+        tabBarActiveTintColor: colors.tint,
+        tabBarInactiveTintColor: colors.tabIconDefault,
         tabBarStyle: {
-          backgroundColor: Colors[colorScheme].surface,
-          borderTopColor: Colors[colorScheme].surfaceBorder,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.surfaceBorder,
         },
         headerStyle: {
-          backgroundColor: Colors[colorScheme].surface,
+          backgroundColor: colors.surface,
         },
-        headerTintColor: Colors[colorScheme].text,
+        headerTintColor: colors.text,
       }}
     >
       <Tabs.Screen
