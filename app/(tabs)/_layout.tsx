@@ -99,6 +99,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="users"
+        options={{
+          title: 'Users',
+          href: profile?.role === 'admin' ? undefined : null,
+          tabBarIcon: ({ color }) => <TabIcon icon="👤" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: 'Settings',

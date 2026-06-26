@@ -13,6 +13,19 @@ export interface BriefingResponse {
   source: 'anthropic' | 'fallback';
 }
 
+export interface AppUser {
+  id: string;
+  display_name: string;
+  email: string | null;
+  role: 'admin' | 'family' | 'friend' | 'member' | 'pending';
+  created_at: string;
+}
+
+export interface UserDirectoryResponse {
+  ok: boolean;
+  users: AppUser[];
+}
+
 const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
 async function apiFetch<T>(
@@ -60,4 +73,8 @@ export async function sendEventInvite(
 
 export async function fetchPersonBriefing(personId: string, session?: Session | null) {
   return apiFetch<BriefingResponse>(`/api/briefing/${personId}`, {}, session);
+}
+
+export async function fetchUserDirectory(session?: Session | null) {
+  return apiFetch<UserDirectoryResponse>('/api/auth/users', {}, session);
 }
