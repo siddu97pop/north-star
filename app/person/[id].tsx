@@ -13,14 +13,18 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
-import { fetchPersonBriefing } from '@/lib/api';
+import { fetchPersonBriefing, fetchPersonRelationshipState, generatePersonRecommendations } from '@/lib/api';
 import { buildLocalBriefing } from '@/lib/briefing';
+import { loadRecommendations } from '@/lib/recommendations';
+import { computeLocalRelationshipState } from '@/lib/relationship-state';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
 import CategoryPicker from '@/components/CategoryPicker';
 import FunctionPicker from '@/components/FunctionPicker';
 import SensitiveMemoryCard from '@/components/SensitiveMemoryCard';
 import ActionItemCard from '@/components/ActionItemCard';
+import RecommendationCard from '@/components/RecommendationCard';
+import RelationshipStateCard from '@/components/RelationshipStateCard';
 import type {
   ActionItem,
   ActionStatus,
@@ -33,7 +37,14 @@ import type {
   Milestone,
   Person,
   PersonPreferences,
+  Recommendation,
+  RecommendationEvidence,
   RelationshipFunction,
+  RelationshipDormancyState,
+  RelationshipHealthState,
+  RelationshipMomentumState,
+  RelationshipState,
+  RelationshipSignal,
   SensitiveMemory,
 } from '@/lib/types';
 
@@ -62,13 +73,17 @@ export default function PersonDetail() {
   const [preferences, setPreferences] = useState<PersonPreferences | null>(null);
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [relationshipState, setRelationshipState] = useState<RelationshipState | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showMilestone, setShowMilestone] = useState(false);
+  const [showStateOverride, setShowStateOverride] = useState(false);
   const [briefing, setBriefing] = useState<string | null>(null);
   const [briefingSource, setBriefingSource] = useState<'anthropic' | 'fallback' | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
 
   const [editName, setEditName] = useState('');
   const [editRelationship, setEditRelationship] = useState<string>('friend');
@@ -80,6 +95,9 @@ export default function PersonDetail() {
   const [milestoneTitle, setMilestoneTitle] = useState('');
   const [milestoneType, setMilestoneType] = useState('custom');
   const [milestoneDate, setMilestoneDate] = useState('');
+  const [overrideHealth, setOverrideHealth] = useState<RelationshipHealthState>('unknown');
+  const [overrideMomentum, setOverrideMomentum] = useState<RelationshipMomentumState>('unknown');
+  const [overrideDormancy, setOverrideDormancy] = useState<RelationshipDormancyState>('active');
 
   const loadPerson = useCallback(async () => {
     const personRes = await supabase.from('lifeos_people').select('*').eq('id', id).single();
@@ -94,7 +112,7 @@ export default function PersonDetail() {
       setEditRoleTitle(personRes.data.primary_role_title ?? '');
       setEditSummary(personRes.data.profile_summary_user ?? '');
 
-      const [interactionRes, attendeeRes, catRes, funcRes, sensRes, prefsRes, actionsRes, milestonesRes] = await Promise.all([
+      const [interactionRes, attendeeRes, catRes, funcRes, sensRes, prefsRes, actionsRes, milestonesRes, signalsRes] = await Promise.all([
         supabase
           .from('lifeos_interactions')
           .select('*')
@@ -149,6 +167,13 @@ export default function PersonDetail() {
           .eq('confirmation_status', 'confirmed')
           .is('deleted_at', null)
           .order('milestone_date', { ascending: true, nullsFirst: false }),
+        supabase
+          .from('lifeos_relationship_signals')
+          .select('*')
+          .eq('person_id', id)
+          .eq('confirmation_status', 'confirmed')
+          .eq('is_active', true)
+          .is('deleted_at', null),
       ]);
 
       if (interactionRes.data) setInteractions(interactionRes.data);
@@ -158,6 +183,44 @@ export default function PersonDetail() {
       if (prefsRes.data) setPreferences(prefsRes.data);
       if (actionsRes.data) setActions(actionsRes.data as ActionItem[]);
       if (milestonesRes.data) setMilestones(milestonesRes.data as Milestone[]);
+      setRecommendations(await loadRecommendations(id, 3).catch(() => []));
+
+      try {
+        const result = await fetchPersonRelationshipState(id, session);
+        setRelationshipState(result.state);
+      } catch (_error) {
+        const { data: localState } = await supabase
+          .from('lifeos_relationship_state')
+          .select('*')
+          .eq('person_id', id)
+          .eq('snapshot_type', 'current')
+          .is('superseded_at', null)
+          .maybeSingle();
+        if (localState?.created_by === 'user') {
+          setRelationshipState(localState as RelationshipState);
+        } else if (!personRes.data.is_private_do_not_analyze) {
+          const draft = computeLocalRelationshipState({
+            signals: (signalsRes.data ?? []) as RelationshipSignal[],
+            lastInteractionAt: personRes.data.last_interaction_at,
+            hasCommitment: (actionsRes.data ?? []).some(action => ['c5_explicit', 'c4_agreed'].includes(action.commitment_certainty ?? '')),
+            hasMilestone: (milestonesRes.data ?? []).some(milestone => {
+              if (!milestone.milestone_date) return false;
+              const daysAway = (new Date(`${milestone.milestone_date}T00:00:00`).getTime() - Date.now()) / 86_400_000;
+              return daysAway >= 0 && daysAway <= 30;
+            }),
+          });
+          const values = { ...draft, confirmation_status: 'suggested', created_by: 'system' };
+          const { data: savedState } = localState
+            ? await supabase.from('lifeos_relationship_state').update(values).eq('id', localState.id).select('*').single()
+            : await supabase.from('lifeos_relationship_state').insert({
+                person_id: id,
+                owner_id: personRes.data.owner_id,
+                ...values,
+                snapshot_type: 'current',
+              }).select('*').single();
+          setRelationshipState((savedState as RelationshipState | null) ?? null);
+        }
+      }
 
       const eventIds = (attendeeRes.data ?? []).map((item) => item.event_id);
 
@@ -177,7 +240,7 @@ export default function PersonDetail() {
     }
 
     setLoading(false);
-  }, [id]);
+  }, [id, session]);
 
   useEffect(() => {
     loadPerson();
@@ -325,6 +388,33 @@ export default function PersonDetail() {
     }
   }
 
+  async function handleGenerateRecommendations() {
+    if (!person || !session) return;
+    setRecommendationsLoading(true);
+    try {
+      const result = await generatePersonRecommendations(person.id, session);
+      const refreshed = result.cards.length > 0 ? result.cards : await loadRecommendations(person.id, 3);
+      setRecommendations(refreshed);
+      if (refreshed.length === 0) {
+        const reason = result.reason === 'private_do_not_analyze'
+          ? 'This person is marked Private / Do Not Analyse.'
+          : result.reason === 'person_preferences'
+            ? 'Suggestions are disabled in this person’s preferences.'
+            : 'No confirmed evidence currently supports a suggestion.';
+        Alert.alert('No suggestions generated', reason);
+      }
+    } catch (error) {
+      Alert.alert('Could not generate suggestions', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setRecommendationsLoading(false);
+    }
+  }
+
+  function openRecommendationEvidence(evidence: RecommendationEvidence) {
+    if (evidence.evidence_object_type === 'interaction') router.push(`/interaction/${evidence.evidence_object_id}`);
+    else if (evidence.evidence_object_type === 'action_item') router.push('/actions');
+  }
+
   async function handleActionStatus(item: ActionItem, status: ActionStatus) {
     const now = new Date();
     const due = new Date(now);
@@ -386,6 +476,55 @@ export default function PersonDetail() {
     setMilestoneType('custom');
     setMilestoneDate('');
     setShowMilestone(false);
+  }
+
+  function openStateOverride() {
+    setOverrideHealth(relationshipState?.health_state ?? 'unknown');
+    setOverrideMomentum(relationshipState?.momentum_state ?? 'unknown');
+    setOverrideDormancy(relationshipState?.dormancy_state ?? 'active');
+    setShowStateOverride(true);
+  }
+
+  async function handleStateOverride() {
+    if (!user || !person) return;
+    const now = new Date().toISOString();
+    const { error: historyError } = await supabase.from('lifeos_relationship_state').update({
+      snapshot_type: 'historical',
+      superseded_at: now,
+    }).eq('person_id', person.id).eq('snapshot_type', 'current').is('superseded_at', null);
+    if (historyError) {
+      Alert.alert('Could not save your override', historyError.message);
+      return;
+    }
+
+    const { data, error } = await supabase.from('lifeos_relationship_state').insert({
+      person_id: person.id,
+      owner_id: user.id,
+      snapshot_type: 'current',
+      health_state: overrideHealth,
+      momentum_state: overrideMomentum,
+      dormancy_state: overrideDormancy,
+      attention_overlay: null,
+      reason_codes: ['USER_OVERRIDE'],
+      confidence_level: 'high',
+      confirmation_status: 'confirmed',
+      created_by: 'user',
+    }).select('*').single();
+    if (error || !data) {
+      Alert.alert('Could not save your override', error?.message ?? 'Please try again.');
+      return;
+    }
+
+    await supabase.from('lifeos_audit_events').insert({
+      owner_id: user.id,
+      actor_type: 'user',
+      event_type: 'relationship_state_overridden',
+      object_type: 'relationship_state',
+      object_id: data.id,
+      event_summary: 'User overrode qualitative relationship state labels',
+    });
+    setRelationshipState(data as RelationshipState);
+    setShowStateOverride(false);
   }
 
   if (loading) {
@@ -455,6 +594,8 @@ export default function PersonDetail() {
             ))}
           </View>
         </View>
+
+        <RelationshipStateCard state={relationshipState} onEdit={openStateOverride} />
 
         {/* Categories */}
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -546,6 +687,34 @@ export default function PersonDetail() {
             <Text style={[styles.prefsArrow, { color: colors.textSecondary }]}>›</Text>
           </View>
         </TouchableOpacity>
+
+        {/* Recommendations */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Recommendations</Text>
+            <TouchableOpacity onPress={() => router.push('/recommendations')} accessibilityRole="button">
+              <Text style={[styles.sectionLink, { color: brand.primaryLight }]}>Review all</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={[styles.generateButton, { borderColor: brand.primaryLight + '66' }, recommendationsLoading && { opacity: 0.5 }]}
+            onPress={handleGenerateRecommendations}
+            disabled={recommendationsLoading || person.is_private_do_not_analyze || preferences?.allow_ai_suggestions === false}
+            accessibilityRole="button"
+            accessibilityLabel="Generate evidence-based recommendations"
+          >
+            {recommendationsLoading ? <ActivityIndicator size="small" color={brand.primaryLight} /> : (
+              <Text style={[styles.generateButtonText, { color: brand.primaryLight }]}>Generate from confirmed evidence</Text>
+            )}
+          </TouchableOpacity>
+          <View style={styles.embeddedList}>
+            {recommendations.length === 0 ? (
+              <Text style={[styles.empty, { color: colors.textSecondary }]}>No active suggestions for this person</Text>
+            ) : recommendations.map(item => (
+              <RecommendationCard key={item.id} recommendation={item} compact onEvidencePress={openRecommendationEvidence} />
+            ))}
+          </View>
+        </View>
 
         {/* Open Actions */}
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -758,7 +927,66 @@ export default function PersonDetail() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={showStateOverride} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <ScrollView style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Adjust Relationship State</Text>
+            <Text style={[styles.overrideIntro, { color: colors.textSecondary }]}>Your labels supersede AI suggestions until you change them.</Text>
+            <StateChoice
+              label="Health"
+              value={overrideHealth}
+              options={['stable', 'positive', 'quiet_but_ok', 'needs_attention', 'care_followup', 'repair_tension', 'unknown']}
+              onChange={value => setOverrideHealth(value as RelationshipHealthState)}
+              colors={colors}
+            />
+            <StateChoice
+              label="Momentum"
+              value={overrideMomentum}
+              options={['growing', 'steady', 'slowing', 'stalled', 'unknown']}
+              onChange={value => setOverrideMomentum(value as RelationshipMomentumState)}
+              colors={colors}
+            />
+            <StateChoice
+              label="Contact rhythm"
+              value={overrideDormancy}
+              options={['active', 'quiet', 'dormant', 'reactivation_candidate']}
+              onChange={value => setOverrideDormancy(value as RelationshipDormancyState)}
+              colors={colors}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { borderColor: colors.surfaceBorder, borderWidth: 1 }]} onPress={() => setShowStateOverride(false)}><Text style={{ color: colors.text }}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: brand.primary }]} onPress={handleStateOverride}><Text style={{ color: '#fff', fontWeight: '700' }}>Save override</Text></TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </>
+  );
+}
+
+function StateChoice({ label, value, options, onChange, colors }: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  colors: { text: string; textSecondary: string; surfaceBorder: string };
+}) {
+  return (
+    <View style={styles.stateChoiceGroup}>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
+      <View style={styles.stateChoiceRow}>
+        {options.map(option => (
+          <TouchableOpacity
+            key={option}
+            style={[styles.stateChoiceChip, { borderColor: colors.surfaceBorder }, value === option && { borderColor: brand.primaryLight, backgroundColor: brand.primary + '22' }]}
+            onPress={() => onChange(option)}
+          >
+            <Text style={[styles.stateChoiceText, { color: value === option ? brand.primaryLight : colors.text }]}>{option.replace(/_/g, ' ')}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -814,8 +1042,15 @@ const styles = StyleSheet.create({
   prefsArrow: { fontSize: 22, fontWeight: '300' },
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   sectionLink: { fontSize: 12, fontWeight: '700' },
+  generateButton: { minHeight: 46, borderWidth: 1, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, marginBottom: 10 },
+  generateButtonText: { fontSize: 12, fontWeight: '800' },
   embeddedList: { gap: 8 },
   milestoneRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 8 },
   milestoneIcon: { fontSize: 17 },
   milestoneModal: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
+  overrideIntro: { fontSize: 13, lineHeight: 20, marginTop: -10, marginBottom: 20 },
+  stateChoiceGroup: { marginBottom: 18 },
+  stateChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  stateChoiceChip: { minHeight: 44, borderWidth: 1, borderRadius: 999, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center' },
+  stateChoiceText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
 });

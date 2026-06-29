@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -14,7 +15,9 @@ import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
 import ActionItemCard from '@/components/ActionItemCard';
-import type { ActionItem, CalendarEvent, VoiceNote } from '@/lib/types';
+import RecommendationCard from '@/components/RecommendationCard';
+import { acceptRecommendation, decideRecommendation, loadRecommendations } from '@/lib/recommendations';
+import type { ActionItem, CalendarEvent, Recommendation, RecommendationEvidence, VoiceNote } from '@/lib/types';
 
 export default function TodayScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
@@ -26,6 +29,7 @@ export default function TodayScreen() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [pendingReviews, setPendingReviews] = useState(0);
 
   const loadDashboard = useCallback(async () => {
@@ -67,6 +71,7 @@ export default function TodayScreen() {
     if (eventsRes.data) setEvents(eventsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
     if (actionsRes.data) setActions(actionsRes.data as ActionItem[]);
+    setRecommendations(await loadRecommendations(undefined, 3).catch(() => []));
     setPendingReviews(pendingRes.count ?? 0);
     setLoading(false);
   }, [user]);
@@ -96,6 +101,40 @@ export default function TodayScreen() {
       default:
         return 'Uploading';
     }
+  }
+
+  async function acceptSuggestion(item: Recommendation) {
+    if (!user) return;
+    const run = async () => {
+      try {
+        await acceptRecommendation(item, user.id);
+        setRecommendations(previous => previous.filter(recommendation => recommendation.id !== item.id));
+      } catch {
+        router.push('/recommendations');
+      }
+    };
+    if (item.agency_level === 'ask_confirmation') {
+      Alert.alert('Confirm suggestion', 'Accepting creates only the action or reminder shown. Nothing is sent automatically.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Accept', onPress: run },
+      ]);
+    } else await run();
+  }
+
+  async function snoozeSuggestion(item: Recommendation) {
+    if (!user) return;
+    try {
+      await decideRecommendation(item, user.id, 'snoozed');
+      setRecommendations(previous => previous.filter(recommendation => recommendation.id !== item.id));
+    } catch {
+      router.push('/recommendations');
+    }
+  }
+
+  function openEvidence(item: Recommendation, evidence: RecommendationEvidence) {
+    if (evidence.evidence_object_type === 'interaction') router.push(`/interaction/${evidence.evidence_object_id}`);
+    else if (evidence.evidence_object_type === 'action_item') router.push('/actions');
+    else if (item.person_id) router.push(`/person/${item.person_id}`);
   }
 
   if (loading) {
@@ -164,6 +203,22 @@ export default function TodayScreen() {
         >
           <Text style={[styles.quickBtnTextSecondary, { color: colors.text }]}>Action Center</Text>
         </TouchableOpacity>
+      </View>
+
+      <SectionHeader title="Suggestions" action="Review all" onPress={() => router.push('/recommendations')} colors={colors} />
+      <View style={styles.listGap}>
+        {recommendations.length === 0 ? (
+          <EmptyCard text="No evidence-based suggestions are waiting. Generate them from a person profile when you want a fresh review." colors={colors} />
+        ) : recommendations.map(item => (
+          <RecommendationCard
+            key={item.id}
+            recommendation={item}
+            compact
+            onAccept={() => acceptSuggestion(item)}
+            onSnooze={() => snoozeSuggestion(item)}
+            onEvidencePress={evidence => openEvidence(item, evidence)}
+          />
+        ))}
       </View>
 
       <SectionHeader title="Today's Commitments" action="View all" onPress={() => router.push('/actions')} colors={colors} />

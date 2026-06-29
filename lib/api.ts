@@ -26,6 +26,20 @@ export interface UserDirectoryResponse {
   users: AppUser[];
 }
 
+export interface RecommendationGenerateResponse {
+  ok: boolean;
+  cards: import('./types').Recommendation[];
+  source?: 'anthropic' | 'fallback';
+  reason?: string;
+}
+
+export interface RelationshipStateResponse {
+  ok: boolean;
+  state: import('./types').RelationshipState | null;
+  source: 'computed' | 'user_override' | 'private_do_not_analyze';
+  evidence_signal_ids?: string[];
+}
+
 const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
 async function apiFetch<T>(
@@ -77,4 +91,16 @@ export async function fetchPersonBriefing(personId: string, session?: Session | 
 
 export async function fetchUserDirectory(session?: Session | null) {
   return apiFetch<UserDirectoryResponse>('/api/auth/users', {}, session);
+}
+
+export async function generatePersonRecommendations(personId: string, session?: Session | null) {
+  return apiFetch<RecommendationGenerateResponse>(
+    '/api/recommendations/generate',
+    { method: 'POST', body: JSON.stringify({ personId }) },
+    session
+  );
+}
+
+export async function fetchPersonRelationshipState(personId: string, session?: Session | null) {
+  return apiFetch<RelationshipStateResponse>(`/api/people/${personId}/state`, {}, session);
 }

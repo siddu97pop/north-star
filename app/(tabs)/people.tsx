@@ -15,7 +15,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
-import type { Person, CategoryAssignment, CategoryDomain, AttentionTier } from '@/lib/types';
+import type { Person, CategoryAssignment, CategoryDomain, AttentionTier, RelationshipState } from '@/lib/types';
 
 const DOMAIN_FILTERS: { key: CategoryDomain | 'all'; label: string; color: string }[] = [
   { key: 'all', label: 'All', color: brand.primary },
@@ -33,6 +33,13 @@ const TIER_FILTERS: { key: AttentionTier | 'all'; label: string }[] = [
 ];
 
 const RELATIONSHIPS = ['family', 'friend', 'colleague', 'acquaintance', 'other'] as const;
+type StateFilter = 'all' | 'needs_attention' | 'dormant' | 'care_followup';
+const STATE_FILTERS: { key: StateFilter; label: string }[] = [
+  { key: 'all', label: 'All states' },
+  { key: 'needs_attention', label: 'Needs attention' },
+  { key: 'dormant', label: 'Dormant' },
+  { key: 'care_followup', label: 'Care follow-up' },
+];
 
 export default function PeopleScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
@@ -41,10 +48,12 @@ export default function PeopleScreen() {
 
   const [people, setPeople] = useState<Person[]>([]);
   const [categoryMap, setCategoryMap] = useState<Record<string, CategoryAssignment[]>>({});
+  const [stateMap, setStateMap] = useState<Record<string, RelationshipState>>({});
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [domainFilter, setDomainFilter] = useState<CategoryDomain | 'all'>('all');
   const [tierFilter, setTierFilter] = useState<AttentionTier | 'all'>('all');
+  const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [newRelationship, setNewRelationship] = useState<string>('friend');
@@ -53,7 +62,7 @@ export default function PeopleScreen() {
 
   const loadPeople = useCallback(async () => {
     if (!user) return;
-    const [peopleRes, catRes] = await Promise.all([
+    const [peopleRes, catRes, stateRes] = await Promise.all([
       supabase
         .from('lifeos_people')
         .select('*')
@@ -65,6 +74,12 @@ export default function PeopleScreen() {
         .select('*')
         .eq('owner_id', user.id)
         .is('deleted_at', null),
+      supabase
+        .from('lifeos_relationship_state')
+        .select('*')
+        .eq('owner_id', user.id)
+        .eq('snapshot_type', 'current')
+        .is('superseded_at', null),
     ]);
 
     if (peopleRes.data) setPeople(peopleRes.data);
@@ -76,6 +91,11 @@ export default function PeopleScreen() {
         map[ca.person_id].push(ca);
       }
       setCategoryMap(map);
+    }
+    if (stateRes.data) {
+      const map: Record<string, RelationshipState> = {};
+      for (const state of stateRes.data) map[state.person_id] = state as RelationshipState;
+      setStateMap(map);
     }
   }, [user]);
 
@@ -116,6 +136,13 @@ export default function PeopleScreen() {
     if (domainFilter !== 'all') {
       const cats = categoryMap[p.id] ?? [];
       if (!cats.some(c => c.category_domain === domainFilter)) return false;
+    }
+    if (stateFilter !== 'all') {
+      const state = stateMap[p.id];
+      if (!state) return false;
+      if (stateFilter === 'dormant' && state.dormancy_state !== 'dormant') return false;
+      if (stateFilter === 'care_followup' && state.health_state !== 'care_followup' && state.attention_overlay !== 'care_needed') return false;
+      if (stateFilter === 'needs_attention' && state.health_state !== 'needs_attention' && state.health_state !== 'repair_tension' && state.attention_overlay !== 'needs_attention') return false;
     }
     return true;
   });
@@ -220,6 +247,18 @@ export default function PeopleScreen() {
         ))}
       </ScrollView>
 
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.stateFilterScroll} contentContainerStyle={styles.filterRow}>
+        {STATE_FILTERS.map(item => (
+          <TouchableOpacity
+            key={item.key}
+            style={[styles.stateFilterChip, { borderColor: colors.surfaceBorder }, stateFilter === item.key && { backgroundColor: brand.primary + '22', borderColor: brand.primaryLight }]}
+            onPress={() => setStateFilter(item.key)}
+          >
+            <Text style={[styles.filterChipText, { color: stateFilter === item.key ? brand.primaryLight : colors.textSecondary }]}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       <FlatList
         data={filtered}
         keyExtractor={p => p.id}
@@ -227,6 +266,7 @@ export default function PeopleScreen() {
         renderItem={({ item }) => {
           const dColor = getDomainColor(item.id);
           const tier = tierBadge(item.attention_tier);
+          const relationshipState = stateMap[item.id];
           return (
             <TouchableOpacity
               style={[styles.personRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
@@ -252,6 +292,11 @@ export default function PeopleScreen() {
                   {' · '}
                   {item.total_interactions} interaction{item.total_interactions !== 1 ? 's' : ''}
                 </Text>
+                {relationshipState ? (
+                  <Text style={[styles.stateMeta, { color: colors.textSecondary }]}>
+                    {relationshipState.health_state.replace(/_/g, ' ')} · {relationshipState.dormancy_state.replace(/_/g, ' ')}
+                  </Text>
+                ) : null}
               </View>
               <Text style={[styles.lastSeen, { color: colors.textSecondary }]}>
                 {timeAgo(item.last_interaction_at)}
@@ -363,8 +408,10 @@ const styles = StyleSheet.create({
   addBtn: { width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   addBtnText: { color: '#fff', fontSize: 22, fontWeight: '600' },
   filterScroll: { maxHeight: 44, paddingLeft: 16 },
+  stateFilterScroll: { maxHeight: 52, paddingLeft: 16, marginTop: 6 },
   filterRow: { gap: 8, paddingRight: 16, alignItems: 'center' },
   filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  stateFilterChip: { minHeight: 44, paddingHorizontal: 13, borderRadius: 999, borderWidth: 1, justifyContent: 'center' },
   filterChipText: { fontSize: 12, fontWeight: '600' },
   filterSpacer: { width: 1, height: 20, backgroundColor: '#334155', marginHorizontal: 4 },
   listContent: { paddingHorizontal: 16, paddingBottom: 40, paddingTop: 12, flexGrow: 1 },
@@ -384,6 +431,7 @@ const styles = StyleSheet.create({
   tierBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   tierBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   personMeta: { fontSize: 12 },
+  stateMeta: { fontSize: 11, marginTop: 4, textTransform: 'capitalize' },
   lastSeen: { fontSize: 12 },
   emptyContainer: { alignItems: 'center', paddingTop: 60 },
   emptyTitle: { fontSize: 18, fontWeight: '600', marginBottom: 8 },

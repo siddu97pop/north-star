@@ -304,6 +304,52 @@ export default function ExtractionReviewScreen() {
       });
     }
 
+    if (field.field_type === 'signal') {
+      // Sensitive extracted content may be retained under its own consent rules,
+      // but it never becomes relationship-state evidence by default.
+      if (['sensitive_lite', 'sensitive', 'restricted'].includes(field.sensitivity_level)) return true;
+      const personId = await resolvePersonId(value);
+      const allowedFamilies = ['trust', 'closeness', 'support', 'momentum', 'strategic_relevance', 'follow_through', 'sensitivity', 'conflict', 'gratitude'];
+      const allowedDirections = ['positive', 'negative', 'neutral', 'mixed'];
+      const family = typeof value.signal_family === 'string' && allowedFamilies.includes(value.signal_family) ? value.signal_family : null;
+      const direction = typeof value.direction === 'string' && allowedDirections.includes(value.direction) ? value.direction : 'neutral';
+      const summary = typeof value.summary === 'string' ? value.summary : field.field_value_text ?? field.field_label ?? 'Confirmed relationship signal';
+      if (!personId || !family) {
+        Alert.alert('Choose a person first', 'This relationship signal could not be linked because the person or signal type was unclear.');
+        return false;
+      }
+      const strength = typeof value.strength === 'string' && ['strong', 'moderate', 'weak'].includes(value.strength)
+        ? value.strength
+        : field.confidence_level === 'high' ? 'strong' : field.confidence_level === 'low' ? 'weak' : 'moderate';
+      const duplicateQuery = supabase.from('lifeos_relationship_signals').select('id')
+        .eq('person_id', personId)
+        .eq('signal_family', family)
+        .eq('signal_direction', direction)
+        .eq('signal_summary', summary)
+        .is('deleted_at', null);
+      const { data: duplicate } = extraction.interaction_id
+        ? await duplicateQuery.eq('source_interaction_id', extraction.interaction_id).maybeSingle()
+        : { data: null };
+      if (!duplicate) {
+        const { error } = await supabase.from('lifeos_relationship_signals').insert({
+          person_id: personId,
+          owner_id: user.id,
+          source_interaction_id: extraction.interaction_id,
+          signal_family: family,
+          signal_direction: direction,
+          signal_strength: strength,
+          signal_summary: summary,
+          confidence_level: field.confidence_level,
+          confirmation_status: 'confirmed',
+          is_active: true,
+        });
+        if (error) {
+          Alert.alert('Could not save relationship signal', error.message);
+          return false;
+        }
+      }
+    }
+
     return true;
   }
 
