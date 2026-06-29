@@ -142,6 +142,85 @@ export interface Person {
 }
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'unavailable';
+export type RelationshipHealthState = 'stable' | 'positive' | 'quiet_but_ok' | 'needs_attention' | 'care_followup' | 'repair_tension' | 'unknown';
+export type RelationshipMomentumState = 'growing' | 'steady' | 'slowing' | 'stalled' | 'unknown';
+export type RelationshipDormancyState = 'active' | 'quiet' | 'dormant' | 'reactivation_candidate';
+export type RelationshipAttentionOverlay = 'needs_attention' | 'care_needed' | 'commitment_pending' | 'milestone_upcoming' | null;
+
+export interface RelationshipSignal {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  source_interaction_id: string | null;
+  signal_family: 'trust' | 'closeness' | 'support' | 'momentum' | 'strategic_relevance' | 'follow_through' | 'sensitivity' | 'conflict' | 'gratitude';
+  signal_direction: 'positive' | 'negative' | 'neutral' | 'mixed';
+  signal_strength: 'strong' | 'moderate' | 'weak';
+  signal_summary: string | null;
+  confidence_level: ConfidenceLevel;
+  confirmation_status: ConfirmationStatus;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface RelationshipState {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  snapshot_type: 'current' | 'historical' | 'ai_suggested';
+  health_state: RelationshipHealthState;
+  momentum_state: RelationshipMomentumState;
+  dormancy_state: RelationshipDormancyState;
+  attention_overlay: RelationshipAttentionOverlay;
+  reason_codes: string[];
+  confidence_level: ConfidenceLevel;
+  confirmation_status: ConfirmationStatus;
+  created_by: 'user' | 'ai' | 'system';
+  created_at: string;
+  superseded_at: string | null;
+}
+
+export type BriefingItemType =
+  | 'context' | 'last_interaction' | 'pending_action' | 'sensitive_context' | 'topics_to_remember'
+  | 'topics_to_avoid' | 'milestones' | 'recommendations' | 'relationship_state'
+  | 'suggested_opener' | 'data_limitation';
+
+export interface BriefingItem {
+  id: string;
+  briefing_id: string;
+  owner_id: string;
+  item_type: BriefingItemType;
+  item_title: string;
+  item_text: string;
+  source_object_type: string | null;
+  source_object_id: string | null;
+  source_label: string;
+  source_date: string | null;
+  confidence_level: ConfidenceLevel;
+  sensitivity_level: SensitivityLevel;
+  visibility_mode: 'hidden' | 'summary_only' | 'full_if_unlocked' | 'visible' | 'never';
+  user_can_hide: boolean;
+  created_at: string;
+}
+
+export interface Briefing {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  briefing_type: 'pre_conversation' | 'profile_review' | 'weekly_review';
+  request_context: string | null;
+  briefing_summary: string;
+  model_name: string;
+  prompt_version: string;
+  sensitive_content_included: boolean;
+  sensitive_content_unlock_required: boolean;
+  sensitive_items_suppressed: number;
+  generation_status: 'complete' | 'failed' | 'superseded';
+  created_at: string;
+  deleted_at: string | null;
+  items: BriefingItem[];
+}
 export type SensitivityLevel = 'none_low' | 'personal' | 'sensitive_lite' | 'sensitive' | 'restricted';
 export type ReviewStatus = 'pending' | 'reviewed' | 'partially_reviewed' | 'skipped';
 export type FieldType = 'person' | 'topic' | 'summary' | 'action_item' | 'category_suggestion' | 'sensitive_memory' | 'signal' | 'milestone';
@@ -236,6 +315,130 @@ export interface PersonPreferences {
   updated_at: string;
 }
 
+export type ActionType =
+  | 'explicit_promise' | 'received_commitment' | 'scheduled_next_step'
+  | 'professional_deliverable' | 'emotional_checkin' | 'milestone_followup'
+  | 'relationship_maintenance' | 'repair_followup' | 'appreciation_gratitude'
+  | 'introduction_obligation' | 'learning_continuation' | 'no_action_memory';
+export type CommitmentCertainty = 'c5_explicit' | 'c4_agreed' | 'c3_implied' | 'c2_weak' | 'c1_low';
+export type ActionStatus =
+  | 'suggested' | 'accepted' | 'active' | 'snoozed' | 'deferred'
+  | 'blocked' | 'completed' | 'dismissed' | 'no_longer_relevant';
+
+export interface ActionItem {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  source_interaction_id: string | null;
+  source_extraction_id: string | null;
+  action_type: ActionType;
+  title: string;
+  description: string | null;
+  commitment_certainty: CommitmentCertainty | null;
+  owner_type: 'user' | 'other_person' | 'shared';
+  due_at: string | null;
+  sensitivity_level: SensitivityLevel;
+  confirmation_status: ConfirmationStatus;
+  status: ActionStatus;
+  created_by: 'user' | 'ai' | 'system';
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  deleted_at: string | null;
+  person?: Pick<Person, 'id' | 'name'> | null;
+}
+
+export interface Reminder {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  action_item_id: string | null;
+  milestone_id: string | null;
+  reminder_type: 'action' | 'milestone' | 'care_checkin' | 'briefing' | 'review';
+  reminder_title: string;
+  reminder_body_safe: string | null;
+  scheduled_for: string | null;
+  cadence_rule: string | null;
+  state: 'suggested' | 'accepted' | 'scheduled' | 'active' | 'snoozed' | 'deferred' | 'done' | 'dismissed' | 'suppressed';
+  snoozed_until: string | null;
+  sensitivity_level: SensitivityLevel;
+  user_confirmed_cadence: boolean;
+  created_by: 'user' | 'ai' | 'system';
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface Milestone {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  source_interaction_id: string | null;
+  source_extraction_id: string | null;
+  milestone_type: string;
+  milestone_title: string;
+  milestone_date: string | null;
+  recurrence_rule: string | null;
+  sensitivity_level: SensitivityLevel;
+  confirmation_status: ConfirmationStatus;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export type RecommendationType =
+  | 'follow_up' | 'category_review' | 'tier_review' | 'care_checkin'
+  | 'reactivation' | 'milestone_reminder' | 'briefing_note' | 'repair'
+  | 'appreciation' | 'maintenance';
+export type EvidenceStrength = 'explicit' | 'strong_inferred' | 'weak_inferred' | 'ambiguous' | 'unavailable';
+export type AgencyLevel = 'inform_only' | 'suggest' | 'ask_confirmation' | 'user_action_required' | 'prohibited_autonomous_action';
+export type RecommendationState = 'active' | 'accepted' | 'edited' | 'dismissed' | 'snoozed' | 'expired' | 'suppressed' | 'converted' | 'deleted';
+export type RecommendationDecisionType = 'accepted' | 'edited' | 'dismissed' | 'snoozed' | 'rejected' | 'marked_sensitive' | 'disabled_similar';
+
+export interface RecommendationEvidence {
+  id: string;
+  recommendation_id: string;
+  owner_id: string;
+  evidence_object_type: 'interaction' | 'extracted_field' | 'signal' | 'action_item' | 'sensitive_memory' | 'milestone' | 'preference';
+  evidence_object_id: string;
+  evidence_summary: string;
+  evidence_strength: EvidenceStrength;
+  sensitivity_level: SensitivityLevel;
+  can_show_to_user: boolean;
+  created_at: string;
+}
+
+export interface Recommendation {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  related_interaction_id: string | null;
+  related_action_item_id: string | null;
+  recommendation_type: RecommendationType;
+  recommendation_title: string;
+  recommendation_text: string;
+  action_requested: string;
+  relationship_context: CategoryDomain | null;
+  evidence_strength: EvidenceStrength;
+  confidence_level: ConfidenceLevel;
+  sensitivity_level: SensitivityLevel;
+  contextual_integrity_status: 'appropriate' | 'needs_confirmation' | 'restricted' | 'do_not_surface';
+  agency_level: AgencyLevel;
+  user_controls_json: string[];
+  expiry_policy: string;
+  expires_at: string | null;
+  snoozed_until: string | null;
+  state: RecommendationState;
+  created_by_model: string;
+  prompt_version: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  evidence?: RecommendationEvidence[];
+  person?: Pick<Person, 'id' | 'name'> | null;
+}
+
 export interface Interaction {
   id: string;
   owner_id: string;
@@ -259,12 +462,56 @@ export interface InteractionStat {
   person_id: string;
   person_name: string;
   relationship: string | null;
+  attention_tier: AttentionTier;
+  lifecycle_state: string;
+  primary_domain: CategoryDomain;
+  health_state: RelationshipHealthState | null;
+  momentum_state: RelationshipMomentumState | null;
+  dormancy_state: RelationshipDormancyState | null;
+  open_action_count: number;
   today: number;
   this_week: number;
   this_month: number;
   this_year: number;
   all_time: number;
   last_seen: string | null;
+}
+
+export interface NotificationEvent {
+  id: string;
+  owner_id: string;
+  reminder_id: string | null;
+  event_type: string;
+  channel: string;
+  delivered_at: string;
+  user_response: string | null;
+  fatigue_signal: boolean;
+  created_at: string;
+}
+
+export interface ExportJob {
+  id: string;
+  owner_id: string;
+  export_scope: string;
+  include_sensitive: boolean;
+  export_format: string;
+  status: 'requested' | 'processing' | 'completed' | 'failed';
+  file_path: string | null;
+  expires_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface DeletionRequest {
+  id: string;
+  owner_id: string;
+  target_object_type: string;
+  target_object_id: string;
+  deletion_mode: string;
+  status: 'requested' | 'processing' | 'completed';
+  ai_context_exclusion_completed: boolean;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export interface InviteRecord {

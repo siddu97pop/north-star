@@ -10,6 +10,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Switch,
+  TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -50,6 +51,12 @@ export default function SettingsScreen() {
   const [globalSensitiveBriefing, setGlobalSensitiveBriefing] = useState(false);
   const [globalBriefingDepth, setGlobalBriefingDepth] = useState('standard');
   const [savingGlobal, setSavingGlobal] = useState(false);
+
+  const [aiRecsEnabled, setAiRecsEnabled] = useState(true);
+  const [scoringMode, setScoringMode] = useState('qualitative');
+  const [quietStart, setQuietStart] = useState('');
+  const [quietEnd, setQuietEnd] = useState('');
+  const [savingPrefs, setSavingPrefs] = useState(false);
 
   const loadUpcomingEvents = useCallback(async () => {
     if (!user) return;
@@ -116,6 +123,23 @@ export default function SettingsScreen() {
 
   useEffect(() => { loadGlobalDefaults(); }, [loadGlobalDefaults]);
 
+  const loadProfilePrefs = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('lifeos_profiles')
+      .select('ai_recommendations_enabled, default_scoring_mode_personal, notification_quiet_hours_start, notification_quiet_hours_end')
+      .eq('id', user.id)
+      .single();
+    if (data) {
+      setAiRecsEnabled(data.ai_recommendations_enabled ?? true);
+      setScoringMode(data.default_scoring_mode_personal ?? 'qualitative');
+      setQuietStart(data.notification_quiet_hours_start ?? '');
+      setQuietEnd(data.notification_quiet_hours_end ?? '');
+    }
+  }, [user]);
+
+  useEffect(() => { loadProfilePrefs(); }, [loadProfilePrefs]);
+
   async function handleSaveGlobalDefaults() {
     if (!user) return;
     setSavingGlobal(true);
@@ -160,9 +184,40 @@ export default function SettingsScreen() {
     Alert.alert('Saved', 'Global sensitivity defaults updated.');
   }
 
+  async function handleSaveProfilePrefs() {
+    if (!user) return;
+    setSavingPrefs(true);
+
+    const update: Record<string, unknown> = {
+      ai_recommendations_enabled: aiRecsEnabled,
+      default_scoring_mode_personal: scoringMode,
+    };
+    if (quietStart) update.notification_quiet_hours_start = quietStart;
+    else update.notification_quiet_hours_start = null;
+    if (quietEnd) update.notification_quiet_hours_end = quietEnd;
+    else update.notification_quiet_hours_end = null;
+
+    await supabase
+      .from('lifeos_profiles')
+      .update(update)
+      .eq('id', user.id);
+
+    await supabase.from('lifeos_audit_events').insert({
+      owner_id: user.id,
+      actor_type: 'user',
+      event_type: 'profile_preferences_updated',
+      object_type: 'profile',
+      object_id: user.id,
+      event_summary: `AI recs=${aiRecsEnabled}, scoring=${scoringMode}, quiet=${quietStart || 'off'}-${quietEnd || 'off'}`,
+    });
+
+    setSavingPrefs(false);
+    Alert.alert('Saved', 'AI and notification preferences updated.');
+  }
+
   async function onRefresh() {
     setRefreshing(true);
-    await Promise.all([loadUpcomingEvents(), loadPendingUsers(), loadGlobalDefaults()]);
+    await Promise.all([loadUpcomingEvents(), loadPendingUsers(), loadGlobalDefaults(), loadProfilePrefs()]);
     setRefreshing(false);
   }
 
@@ -424,7 +479,15 @@ export default function SettingsScreen() {
       {/* Quick Links */}
       <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>QUICK LINKS</Text>
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/stats')}>
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/portfolio')}>
+          <Text style={styles.menuIcon}>🌐</Text>
+          <View style={styles.menuInfo}>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>Relationship Portfolio</Text>
+            <Text style={[styles.menuSub, { color: colors.textSecondary }]}>Qualitative view of your relationships</Text>
+          </View>
+          <Text style={[styles.chevron, { color: colors.textSecondary }]}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuRow, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.surfaceBorder }]} onPress={() => router.push('/stats')}>
           <Text style={styles.menuIcon}>📊</Text>
           <View style={styles.menuInfo}>
             <Text style={[styles.menuLabel, { color: colors.text }]}>Interaction Stats</Text>
@@ -488,11 +551,115 @@ export default function SettingsScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.saveGlobalBtn, { backgroundColor: brand.primary }]}
+            style={[styles.saveBtn, { backgroundColor: brand.primary }]}
             onPress={handleSaveGlobalDefaults}
             disabled={savingGlobal}
           >
-            <Text style={styles.saveGlobalBtnText}>{savingGlobal ? 'Saving...' : 'Save Defaults'}</Text>
+            <Text style={styles.saveBtnText}>{savingGlobal ? 'Saving...' : 'Save Defaults'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Privacy Controls */}
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>PRIVACY CONTROLS</Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/export')}>
+          <Text style={styles.menuIcon}>📦</Text>
+          <View style={styles.menuInfo}>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>Export Data</Text>
+            <Text style={[styles.menuSub, { color: colors.textSecondary }]}>Download a JSON copy of your data</Text>
+          </View>
+          <Text style={[styles.chevron, { color: colors.textSecondary }]}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuRow, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.surfaceBorder }]} onPress={() => router.push('/audit')}>
+          <Text style={styles.menuIcon}>📋</Text>
+          <View style={styles.menuInfo}>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>Audit Log</Text>
+            <Text style={[styles.menuSub, { color: colors.textSecondary }]}>Review all changes made to your data</Text>
+          </View>
+          <Text style={[styles.chevron, { color: colors.textSecondary }]}>›</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* AI Preferences */}
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>AI PREFERENCES</Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+        <View style={styles.sensitivitySection}>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchLabel, { color: colors.text }]}>AI recommendations</Text>
+              <Text style={[styles.switchDesc, { color: colors.textSecondary }]}>
+                Enable or disable all AI-generated suggestions
+              </Text>
+            </View>
+            <Switch value={aiRecsEnabled} onValueChange={setAiRecsEnabled} trackColor={{ true: brand.primary }} />
+          </View>
+
+          <View style={{ marginTop: 14 }}>
+            <Text style={[styles.switchLabel, { color: colors.text }]}>Default scoring mode</Text>
+            <View style={[styles.depthRow, { marginTop: 8 }]}>
+              {['qualitative', 'quantitative'].map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={[
+                    styles.depthChip,
+                    { borderColor: colors.surfaceBorder },
+                    scoringMode === m && { backgroundColor: brand.primary + '22', borderColor: brand.primary },
+                  ]}
+                  onPress={() => setScoringMode(m)}
+                >
+                  <Text style={[
+                    styles.depthChipText,
+                    { color: colors.textSecondary },
+                    scoringMode === m && { color: brand.primary },
+                  ]}>
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Notification Preferences */}
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>NOTIFICATION PREFERENCES</Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+        <View style={styles.sensitivitySection}>
+          <Text style={[styles.sensitivityDesc, { color: colors.textSecondary }]}>
+            Set quiet hours to suppress non-urgent notifications. Use 24-hour format (e.g. 22:00).
+          </Text>
+          <View style={styles.quietRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchDesc, { color: colors.textSecondary, marginBottom: 4 }]}>Start</Text>
+              <TextInput
+                style={[styles.timeInput, { color: colors.text, borderColor: colors.surfaceBorder }]}
+                value={quietStart}
+                onChangeText={setQuietStart}
+                placeholder="22:00"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchDesc, { color: colors.textSecondary, marginBottom: 4 }]}>End</Text>
+              <TextInput
+                style={[styles.timeInput, { color: colors.text, borderColor: colors.surfaceBorder }]}
+                value={quietEnd}
+                onChangeText={setQuietEnd}
+                placeholder="07:00"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.saveBtn, { backgroundColor: brand.primary }]}
+            onPress={handleSaveProfilePrefs}
+            disabled={savingPrefs}
+          >
+            <Text style={styles.saveBtnText}>{savingPrefs ? 'Saving...' : 'Save Preferences'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -577,6 +744,8 @@ const styles = StyleSheet.create({
   depthRow: { flexDirection: 'row', gap: 8 },
   depthChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1 },
   depthChipText: { fontSize: 12, fontWeight: '600' },
-  saveGlobalBtn: { height: 42, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
-  saveGlobalBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  saveBtn: { height: 42, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  quietRow: { flexDirection: 'row', gap: 12 },
+  timeInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, fontWeight: '500' },
 });

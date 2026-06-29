@@ -47,6 +47,9 @@ function RootLayoutNav() {
       <Stack.Screen name="voice/[id]" options={{ title: 'Voice Note', presentation: 'modal' }} />
       <Stack.Screen name="event/[id]" options={{ title: 'Event', presentation: 'modal' }} />
       <Stack.Screen name="person/[id]" options={{ title: 'Person', presentation: 'modal' }} />
+      <Stack.Screen name="actions" options={{ title: 'Action Center', presentation: 'modal' }} />
+      <Stack.Screen name="recommendations" options={{ title: 'Suggestions', presentation: 'modal' }} />
+      <Stack.Screen name="interaction/[id]" options={{ title: 'Source Interaction', presentation: 'modal' }} />
     </Stack>
   );
 }

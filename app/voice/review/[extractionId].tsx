@@ -19,6 +19,8 @@ import type {
   ConfidenceLevel,
   SensitivityLevel,
   ConfirmationStatus,
+  ActionType,
+  CommitmentCertainty,
 } from '@/lib/types';
 
 function confidenceBadge(level: ConfidenceLevel): { label: string; color: string } {
@@ -115,23 +117,240 @@ export default function ExtractionReviewScreen() {
 
     setFields(prev => prev.map(f => f.id === fieldId ? { ...f, confirmation_status: status } : f));
 
-    if (status === 'confirmed') {
-      const field = fields.find(f => f.id === fieldId);
-      if (field?.field_type === 'category_suggestion' && field.field_value_json && user) {
-        const suggestion = field.field_value_json as { domain?: string; subcategory?: string; person_id?: string };
-        if (suggestion.domain && suggestion.person_id) {
-          await supabase.from('lifeos_category_assignments').insert({
-            person_id: suggestion.person_id,
-            owner_id: user.id,
-            category_domain: suggestion.domain,
-            subcategory: suggestion.subcategory ?? null,
-            is_primary: false,
-            assignment_source: 'ai_suggested',
-            confirmation_status: 'confirmed',
-          });
+  }
+
+  async function resolvePersonId(value: Record<string, unknown> | null): Promise<string | null> {
+    if (!user) return null;
+    if (typeof value?.person_id === 'string') return value.person_id;
+
+    let personName = typeof value?.person_name === 'string' ? value.person_name : null;
+    if (!personName) {
+      const mentionedPeople = fields
+        .filter(field => field.field_type === 'person' && field.field_value_json)
+        .map(field => field.field_value_json as { name?: string })
+        .filter(person => person.name);
+      if (mentionedPeople.length === 1) personName = mentionedPeople[0].name ?? null;
+    }
+    if (!personName) return null;
+
+    const { data } = await supabase
+      .from('lifeos_people')
+      .select('id')
+      .eq('owner_id', user.id)
+      .eq('normalized_name', personName.trim().toLowerCase())
+      .limit(1)
+      .maybeSingle();
+    return data?.id ?? null;
+  }
+
+  function validDate(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  async function createAdaptiveReminder(
+    actionId: string,
+    personId: string | null,
+    title: string,
+    certainty: CommitmentCertainty,
+    dueAt: string | null,
+    sensitivityLevel: SensitivityLevel,
+  ) {
+    if (!user || !['c5_explicit', 'c4_agreed'].includes(certainty)) return;
+
+    const { data: existing } = await supabase
+      .from('lifeos_reminders')
+      .select('id')
+      .eq('action_item_id', actionId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (existing) return;
+
+    let reminderPolicy = 'normal';
+    let boundaryState = 'none';
+    if (personId) {
+      const { data: preferences } = await supabase
+        .from('lifeos_person_preferences')
+        .select('reminder_policy,boundary_state')
+        .eq('person_id', personId)
+        .maybeSingle();
+      reminderPolicy = preferences?.reminder_policy ?? 'normal';
+      boundaryState = preferences?.boundary_state ?? 'none';
+    }
+
+    const suppressed = reminderPolicy === 'none' || boundaryState === 'no_contact';
+    const now = new Date();
+    let scheduledFor = dueAt ? new Date(dueAt) : new Date(now);
+    if (dueAt) scheduledFor.setDate(scheduledFor.getDate() - 1);
+    else scheduledFor.setDate(now.getDate() + (reminderPolicy === 'gentle' ? 3 : reminderPolicy === 'minimal' ? 7 : 1));
+    if (scheduledFor < now) scheduledFor = now;
+
+    const sensitive = ['sensitive_lite', 'sensitive', 'restricted'].includes(sensitivityLevel);
+    await supabase.from('lifeos_reminders').insert({
+      owner_id: user.id,
+      person_id: personId,
+      action_item_id: actionId,
+      reminder_type: 'action',
+      reminder_title: sensitive ? 'You have a private follow-up' : title,
+      reminder_body_safe: sensitive ? 'Open Life OS to review the details.' : 'A commitment you confirmed is coming up.',
+      scheduled_for: scheduledFor.toISOString(),
+      cadence_rule: reminderPolicy === 'minimal' ? 'weekly_review' : 'one_time',
+      state: suppressed ? 'suppressed' : 'suggested',
+      sensitivity_level: sensitivityLevel,
+      user_confirmed_cadence: false,
+      created_by: 'ai',
+    });
+  }
+
+  async function persistConfirmedField(field: ExtractedField, redacted = false): Promise<boolean> {
+    if (!user || !extraction) return false;
+    const value = (field.field_value_json ?? {}) as Record<string, unknown>;
+
+    if (field.field_type === 'category_suggestion') {
+      const personId = await resolvePersonId(value);
+      if (typeof value.domain === 'string' && personId) {
+        const { data: existing } = await supabase
+          .from('lifeos_category_assignments')
+          .select('id')
+          .eq('person_id', personId)
+          .eq('category_domain', value.domain)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (!existing) await supabase.from('lifeos_category_assignments').insert({
+          person_id: personId,
+          owner_id: user.id,
+          category_domain: value.domain,
+          subcategory: typeof value.subcategory === 'string' ? value.subcategory : null,
+          is_primary: false,
+          assignment_source: 'ai_suggested',
+          confirmation_status: 'confirmed',
+        });
+      }
+    }
+
+    if (field.field_type === 'action_item') {
+      const personId = await resolvePersonId(value);
+      const title = redacted
+        ? (field.field_label ?? 'Private follow-up')
+        : (typeof value.task === 'string' ? value.task : field.field_value_text ?? field.field_label ?? 'Follow up');
+      const certainty = (typeof value.commitment_certainty === 'string'
+        ? value.commitment_certainty
+        : field.confidence_level === 'high' ? 'c4_agreed' : field.confidence_level === 'medium' ? 'c3_implied' : 'c2_weak') as CommitmentCertainty;
+      const actionType = (typeof value.action_type === 'string' ? value.action_type : 'scheduled_next_step') as ActionType;
+      const ownerType = ['user', 'other_person', 'shared'].includes(String(value.owner)) ? value.owner : 'user';
+
+      const { data: duplicate } = await supabase
+        .from('lifeos_action_items')
+        .select('id')
+        .eq('source_extraction_id', extraction.id)
+        .eq('title', title)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!duplicate) {
+        const { data: action, error } = await supabase.from('lifeos_action_items').insert({
+          owner_id: user.id,
+          person_id: personId,
+          source_interaction_id: extraction.interaction_id,
+          source_extraction_id: extraction.id,
+          action_type: actionType,
+          title,
+          description: redacted ? null : (typeof value.due_hint === 'string' ? value.due_hint : null),
+          commitment_certainty: certainty,
+          owner_type: ownerType,
+          due_at: validDate(value.due_at),
+          sensitivity_level: field.sensitivity_level,
+          confirmation_status: 'confirmed',
+          status: ['c5_explicit', 'c4_agreed'].includes(certainty) ? 'active' : certainty === 'c3_implied' ? 'accepted' : 'suggested',
+          created_by: 'ai',
+        }).select('id').single();
+        if (error || !action) {
+          Alert.alert('Could not create action', error?.message ?? 'Please try again.');
+          return false;
+        }
+        await createAdaptiveReminder(action.id, personId, title, certainty, validDate(value.due_at), field.sensitivity_level);
+      }
+    }
+
+    if (field.field_type === 'milestone') {
+      const personId = await resolvePersonId(value);
+      if (!personId) {
+        Alert.alert('Choose a person first', 'This milestone could not be linked because the person was unclear.');
+        return false;
+      }
+      const title = redacted
+        ? (field.field_label ?? 'Private milestone')
+        : (typeof value.title === 'string' ? value.title : field.field_value_text ?? field.field_label ?? 'Milestone');
+      const milestoneDate = typeof value.milestone_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.milestone_date)
+        ? value.milestone_date
+        : null;
+      const { data: duplicate } = await supabase
+        .from('lifeos_milestones')
+        .select('id')
+        .eq('source_extraction_id', extraction.id)
+        .eq('milestone_title', title)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!duplicate) await supabase.from('lifeos_milestones').insert({
+        person_id: personId,
+        owner_id: user.id,
+        source_interaction_id: extraction.interaction_id,
+        source_extraction_id: extraction.id,
+        milestone_type: typeof value.milestone_type === 'string' ? value.milestone_type : 'custom',
+        milestone_title: title,
+        milestone_date: milestoneDate,
+        sensitivity_level: field.sensitivity_level,
+        confirmation_status: 'confirmed',
+      });
+    }
+
+    if (field.field_type === 'signal') {
+      // Sensitive extracted content may be retained under its own consent rules,
+      // but it never becomes relationship-state evidence by default.
+      if (['sensitive_lite', 'sensitive', 'restricted'].includes(field.sensitivity_level)) return true;
+      const personId = await resolvePersonId(value);
+      const allowedFamilies = ['trust', 'closeness', 'support', 'momentum', 'strategic_relevance', 'follow_through', 'sensitivity', 'conflict', 'gratitude'];
+      const allowedDirections = ['positive', 'negative', 'neutral', 'mixed'];
+      const family = typeof value.signal_family === 'string' && allowedFamilies.includes(value.signal_family) ? value.signal_family : null;
+      const direction = typeof value.direction === 'string' && allowedDirections.includes(value.direction) ? value.direction : 'neutral';
+      const summary = typeof value.summary === 'string' ? value.summary : field.field_value_text ?? field.field_label ?? 'Confirmed relationship signal';
+      if (!personId || !family) {
+        Alert.alert('Choose a person first', 'This relationship signal could not be linked because the person or signal type was unclear.');
+        return false;
+      }
+      const strength = typeof value.strength === 'string' && ['strong', 'moderate', 'weak'].includes(value.strength)
+        ? value.strength
+        : field.confidence_level === 'high' ? 'strong' : field.confidence_level === 'low' ? 'weak' : 'moderate';
+      const duplicateQuery = supabase.from('lifeos_relationship_signals').select('id')
+        .eq('person_id', personId)
+        .eq('signal_family', family)
+        .eq('signal_direction', direction)
+        .eq('signal_summary', summary)
+        .is('deleted_at', null);
+      const { data: duplicate } = extraction.interaction_id
+        ? await duplicateQuery.eq('source_interaction_id', extraction.interaction_id).maybeSingle()
+        : { data: null };
+      if (!duplicate) {
+        const { error } = await supabase.from('lifeos_relationship_signals').insert({
+          person_id: personId,
+          owner_id: user.id,
+          source_interaction_id: extraction.interaction_id,
+          signal_family: family,
+          signal_direction: direction,
+          signal_strength: strength,
+          signal_summary: summary,
+          confidence_level: field.confidence_level,
+          confirmation_status: 'confirmed',
+          is_active: true,
+        });
+        if (error) {
+          Alert.alert('Could not save relationship signal', error.message);
+          return false;
         }
       }
     }
+
+    return true;
   }
 
   async function saveSensitiveMemory(
@@ -190,6 +409,8 @@ export default function ExtractionReviewScreen() {
       briefing_visibility: mode === 'redacted' ? 'hidden' : 'collapsed',
     });
 
+    const persisted = await persistConfirmedField(field, mode === 'redacted');
+    if (!persisted) return;
     await updateFieldStatus(field.id, 'confirmed');
 
     await supabase.from('lifeos_audit_events').insert({
@@ -215,11 +436,12 @@ export default function ExtractionReviewScreen() {
     );
   }
 
-  function handleFieldAccept(field: ExtractedField) {
+  async function handleFieldAccept(field: ExtractedField) {
     if (isSensitiveField(field)) {
       showSensitiveDialog(field);
     } else {
-      updateFieldStatus(field.id, 'confirmed');
+      const persisted = await persistConfirmedField(field);
+      if (persisted) await updateFieldStatus(field.id, 'confirmed');
     }
   }
 
@@ -231,7 +453,8 @@ export default function ExtractionReviewScreen() {
     const normalFields = pending.filter(f => !isSensitiveField(f));
 
     for (const f of normalFields) {
-      await updateFieldStatus(f.id, 'confirmed');
+      const persisted = await persistConfirmedField(f);
+      if (persisted) await updateFieldStatus(f.id, 'confirmed');
     }
 
     if (sensitiveFields.length > 0) {

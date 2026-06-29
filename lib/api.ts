@@ -9,7 +9,7 @@ export interface InviteSendResponse {
 
 export interface BriefingResponse {
   ok: boolean;
-  briefing: string;
+  briefing: import('./types').Briefing;
   source: 'anthropic' | 'fallback';
 }
 
@@ -24,6 +24,20 @@ export interface AppUser {
 export interface UserDirectoryResponse {
   ok: boolean;
   users: AppUser[];
+}
+
+export interface RecommendationGenerateResponse {
+  ok: boolean;
+  cards: import('./types').Recommendation[];
+  source?: 'anthropic' | 'fallback';
+  reason?: string;
+}
+
+export interface RelationshipStateResponse {
+  ok: boolean;
+  state: import('./types').RelationshipState | null;
+  source: 'computed' | 'user_override' | 'private_do_not_analyze';
+  evidence_signal_ids?: string[];
 }
 
 const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
@@ -77,4 +91,93 @@ export async function fetchPersonBriefing(personId: string, session?: Session | 
 
 export async function fetchUserDirectory(session?: Session | null) {
   return apiFetch<UserDirectoryResponse>('/api/auth/users', {}, session);
+}
+
+export async function generatePersonRecommendations(personId: string, session?: Session | null) {
+  return apiFetch<RecommendationGenerateResponse>(
+    '/api/recommendations/generate',
+    { method: 'POST', body: JSON.stringify({ personId }) },
+    session
+  );
+}
+
+export async function fetchPersonRelationshipState(personId: string, session?: Session | null) {
+  return apiFetch<RelationshipStateResponse>(`/api/people/${personId}/state`, {}, session);
+}
+
+export interface PendingConfirmationsResponse {
+  ok: boolean;
+  total: number;
+  counts: {
+    extractions: number;
+    actions: number;
+    signals: number;
+    milestones: number;
+    recommendations: number;
+  };
+}
+
+export interface ExportResponse {
+  ok: boolean;
+  jobId: string;
+  export: {
+    exportedAt: string;
+    exportScope: string;
+    includeSensitive: boolean;
+    data: Record<string, unknown[]>;
+  };
+}
+
+export interface DeletionResponse {
+  ok: boolean;
+  deletionRequestId: string;
+  deletionMode: string;
+  cascades: string[];
+}
+
+export async function fetchPendingConfirmations(session?: Session | null) {
+  return apiFetch<PendingConfirmationsResponse>('/api/dashboard/pending-confirmations', {}, session);
+}
+
+export async function requestDataExport(
+  params: { scope?: string; includeSensitive?: boolean },
+  session?: Session | null
+) {
+  return apiFetch<ExportResponse>(
+    '/api/export',
+    { method: 'POST', body: JSON.stringify(params) },
+    session
+  );
+}
+
+export interface PortfolioResponse {
+  ok: boolean;
+  totalPeople: number;
+  totalSignals: number;
+  domainBalance: { work: number; personal: number; other_strategic: number };
+  tierDistribution: Record<string, number>;
+  healthDistribution: Record<string, number>;
+  dataConfidence: { total: number; lowConfidence: number; highConfidence: number };
+  dormantCandidates: {
+    id: string;
+    name: string;
+    attention_tier: string;
+    last_interaction_at: string | null;
+    dormancy_state: string;
+  }[];
+}
+
+export async function fetchPortfolio(session?: Session | null) {
+  return apiFetch<PortfolioResponse>('/api/dashboard/portfolio', {}, session);
+}
+
+export async function requestDeletion(
+  params: { objectType: string; objectId: string; deletionMode?: string },
+  session?: Session | null
+) {
+  return apiFetch<DeletionResponse>(
+    '/api/deletion',
+    { method: 'POST', body: JSON.stringify(params) },
+    session
+  );
 }
