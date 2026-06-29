@@ -462,12 +462,31 @@ export interface InteractionStat {
   person_id: string;
   person_name: string;
   relationship: string | null;
+  attention_tier: AttentionTier;
+  lifecycle_state: string;
+  primary_domain: CategoryDomain;
+  health_state: RelationshipHealthState | null;
+  momentum_state: RelationshipMomentumState | null;
+  dormancy_state: RelationshipDormancyState | null;
+  open_action_count: number;
   today: number;
   this_week: number;
   this_month: number;
   this_year: number;
   all_time: number;
   last_seen: string | null;
+}
+
+export interface NotificationEvent {
+  id: string;
+  owner_id: string;
+  reminder_id: string | null;
+  event_type: string;
+  channel: string;
+  delivered_at: string;
+  user_response: string | null;
+  fatigue_signal: boolean;
+  created_at: string;
 }
 
 export interface ExportJob {

@@ -150,6 +150,27 @@ export async function requestDataExport(
   );
 }
 
+export interface PortfolioResponse {
+  ok: boolean;
+  totalPeople: number;
+  totalSignals: number;
+  domainBalance: { work: number; personal: number; other_strategic: number };
+  tierDistribution: Record<string, number>;
+  healthDistribution: Record<string, number>;
+  dataConfidence: { total: number; lowConfidence: number; highConfidence: number };
+  dormantCandidates: {
+    id: string;
+    name: string;
+    attention_tier: string;
+    last_interaction_at: string | null;
+    dormancy_state: string;
+  }[];
+}
+
+export async function fetchPortfolio(session?: Session | null) {
+  return apiFetch<PortfolioResponse>('/api/dashboard/portfolio', {}, session);
+}
+
 export async function requestDeletion(
   params: { objectType: string; objectId: string; deletionMode?: string },
   session?: Session | null

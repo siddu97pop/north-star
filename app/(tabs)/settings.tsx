@@ -479,7 +479,15 @@ export default function SettingsScreen() {
       {/* Quick Links */}
       <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>QUICK LINKS</Text>
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/stats')}>
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/portfolio')}>
+          <Text style={styles.menuIcon}>🌐</Text>
+          <View style={styles.menuInfo}>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>Relationship Portfolio</Text>
+            <Text style={[styles.menuSub, { color: colors.textSecondary }]}>Qualitative view of your relationships</Text>
+          </View>
+          <Text style={[styles.chevron, { color: colors.textSecondary }]}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuRow, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.surfaceBorder }]} onPress={() => router.push('/stats')}>
           <Text style={styles.menuIcon}>📊</Text>
           <View style={styles.menuInfo}>
             <Text style={[styles.menuLabel, { color: colors.text }]}>Interaction Stats</Text>
