@@ -77,6 +77,41 @@ export interface Extraction {
   created_at: string;
 }
 
+export type CategoryDomain = 'work' | 'personal' | 'other_strategic';
+export type AttentionTier = 'high_attention' | 'active_maintenance' | 'light_touch' | 'needs_attention' | 'private_do_not_analyze';
+export type ConfirmationStatus = 'confirmed' | 'suggested' | 'rejected' | 'corrected';
+export type FunctionType =
+  | 'mentor' | 'sponsor' | 'advisor' | 'coach' | 'collaborator'
+  | 'support_tie' | 'bridge' | 'connector' | 'expert_source'
+  | 'weak_tie' | 'dormant_tie' | 'care_checkin_relevant';
+
+export interface CategoryAssignment {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  category_domain: CategoryDomain;
+  subcategory: string | null;
+  is_primary: boolean;
+  assignment_source: 'manual' | 'ai_suggested';
+  confirmation_status: ConfirmationStatus;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface RelationshipFunction {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  function_type: FunctionType;
+  function_context: string | null;
+  assignment_source: string;
+  confirmation_status: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
 export interface Person {
   id: string;
   owner_id: string;
@@ -91,6 +126,112 @@ export interface Person {
   linked_user_id: string | null;
   total_interactions: number;
   last_interaction_at: string | null;
+  attention_tier: AttentionTier;
+  lifecycle_state: string;
+  scoring_mode: string;
+  linkedin_url: string | null;
+  primary_role_title: string | null;
+  profile_summary_user: string | null;
+  is_archived: boolean;
+  is_private_do_not_analyze: boolean;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  category_assignments?: CategoryAssignment[];
+  relationship_functions?: RelationshipFunction[];
+}
+
+export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'unavailable';
+export type SensitivityLevel = 'none_low' | 'personal' | 'sensitive_lite' | 'sensitive' | 'restricted';
+export type ReviewStatus = 'pending' | 'reviewed' | 'partially_reviewed' | 'skipped';
+export type FieldType = 'person' | 'topic' | 'summary' | 'action_item' | 'category_suggestion' | 'sensitive_memory' | 'signal' | 'milestone';
+
+export interface InteractionExtraction {
+  id: string;
+  interaction_id: string | null;
+  voice_note_id: string | null;
+  owner_id: string;
+  model_name: string | null;
+  prompt_version: string | null;
+  raw_model_output: unknown;
+  overall_confidence: ConfidenceLevel;
+  contains_sensitive_candidate: boolean;
+  requires_user_review: boolean;
+  review_status: ReviewStatus;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface ExtractedField {
+  id: string;
+  extraction_id: string;
+  owner_id: string;
+  field_type: FieldType;
+  field_label: string | null;
+  field_value_text: string | null;
+  field_value_json: unknown;
+  evidence_quote: string | null;
+  confidence_level: ConfidenceLevel;
+  sensitivity_level: SensitivityLevel;
+  confirmation_status: ConfirmationStatus;
+  corrected_value_json: unknown;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  owner_id: string;
+  actor_type: 'user' | 'ai' | 'system';
+  event_type: string;
+  object_type: string | null;
+  object_id: string | null;
+  event_summary: string | null;
+  before_json: unknown;
+  after_json: unknown;
+  created_at: string;
+}
+
+export type SensitivityReasonCode =
+  | 'emotional_distress' | 'health_related' | 'family_private' | 'romantic'
+  | 'financial' | 'legal' | 'client_confidential' | 'firm_confidential'
+  | 'career_sensitive' | 'conflict' | 'third_party_secret';
+
+export type StorageConsentStatus = 'pending' | 'granted' | 'denied' | 'revoked';
+
+export interface SensitiveMemory {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  source_interaction_id: string | null;
+  source_extraction_id: string | null;
+  memory_title: string | null;
+  memory_summary_minimal: string | null;
+  memory_detail: string | null;
+  sensitivity_level: Exclude<SensitivityLevel, 'none_low'>;
+  sensitivity_reason_codes: SensitivityReasonCode[];
+  storage_consent_status: StorageConsentStatus;
+  allowed_uses: string[];
+  briefing_visibility: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface PersonPreferences {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  desired_contact_cadence_days: number | null;
+  reminder_policy: string;
+  scoring_mode_override: string | null;
+  allow_ai_suggestions: boolean;
+  allow_sensitive_in_briefings: boolean;
+  briefing_depth: string;
+  topics_to_avoid: string | null;
+  boundary_state: string;
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +246,11 @@ export interface Interaction {
   context: string | null;
   topics: string[];
   sentiment: 'positive' | 'neutral' | 'negative' | 'mixed' | null;
+  raw_user_note: string | null;
+  ai_summary: string | null;
+  ai_summary_confirmed: boolean;
+  overall_sensitivity_level: SensitivityLevel;
+  included_in_ai_context: boolean;
   created_at: string;
 }
 

@@ -25,6 +25,7 @@ export default function TodayScreen() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [stats, setStats] = useState<InteractionStat[]>([]);
+  const [pendingReviews, setPendingReviews] = useState(0);
 
   const loadDashboard = useCallback(async () => {
     if (!user) return;
@@ -33,7 +34,7 @@ export default function TodayScreen() {
     const weekAhead = new Date();
     weekAhead.setDate(now.getDate() + 7);
 
-    const [eventsRes, notesRes, statsRes] = await Promise.all([
+    const [eventsRes, notesRes, statsRes, pendingRes] = await Promise.all([
       supabase
         .from('lifeos_events')
         .select('*')
@@ -52,11 +53,17 @@ export default function TodayScreen() {
         .eq('owner_id', user.id)
         .order('this_month', { ascending: false })
         .limit(5),
+      supabase
+        .from('lifeos_interaction_extractions')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_id', user.id)
+        .eq('review_status', 'pending'),
     ]);
 
     if (eventsRes.data) setEvents(eventsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
     if (statsRes.data) setStats(statsRes.data);
+    setPendingReviews(pendingRes.count ?? 0);
     setLoading(false);
   }, [user]);
 
@@ -129,6 +136,18 @@ export default function TodayScreen() {
           <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>People This Week</Text>
         </View>
       </View>
+
+      {pendingReviews > 0 && (
+        <TouchableOpacity
+          style={[styles.pendingBanner, { backgroundColor: brand.warning + '15', borderColor: brand.warning + '44' }]}
+          onPress={() => router.push('/(tabs)/record')}
+        >
+          <Text style={[styles.pendingBannerText, { color: brand.warning }]}>
+            {pendingReviews} extraction{pendingReviews === 1 ? '' : 's'} pending review
+          </Text>
+          <Text style={[styles.pendingBannerAction, { color: brand.warning }]}>Review →</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.quickActions}>
         <TouchableOpacity
@@ -313,4 +332,7 @@ const styles = StyleSheet.create({
   personBadgeText: { fontSize: 16, fontWeight: '800' },
   emptyCard: { borderWidth: 1, borderRadius: 14, padding: 16 },
   emptyText: { fontSize: 14, lineHeight: 20 },
+  pendingBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderRadius: 12, borderWidth: 1, marginBottom: 14 },
+  pendingBannerText: { fontSize: 14, fontWeight: '600' },
+  pendingBannerAction: { fontSize: 13, fontWeight: '700' },
 });

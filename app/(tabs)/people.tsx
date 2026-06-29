@@ -15,7 +15,22 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
-import type { Person } from '@/lib/types';
+import type { Person, CategoryAssignment, CategoryDomain, AttentionTier } from '@/lib/types';
+
+const DOMAIN_FILTERS: { key: CategoryDomain | 'all'; label: string; color: string }[] = [
+  { key: 'all', label: 'All', color: brand.primary },
+  { key: 'work', label: 'Work', color: brand.accent },
+  { key: 'personal', label: 'Personal', color: brand.danger },
+  { key: 'other_strategic', label: 'Strategic', color: brand.warning },
+];
+
+const TIER_FILTERS: { key: AttentionTier | 'all'; label: string }[] = [
+  { key: 'all', label: 'All Tiers' },
+  { key: 'high_attention', label: 'High' },
+  { key: 'active_maintenance', label: 'Active' },
+  { key: 'light_touch', label: 'Light' },
+  { key: 'needs_attention', label: 'Needs Attn' },
+];
 
 const RELATIONSHIPS = ['family', 'friend', 'colleague', 'acquaintance', 'other'] as const;
 
@@ -25,8 +40,11 @@ export default function PeopleScreen() {
   const { user } = useAuth();
 
   const [people, setPeople] = useState<Person[]>([]);
+  const [categoryMap, setCategoryMap] = useState<Record<string, CategoryAssignment[]>>({});
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [domainFilter, setDomainFilter] = useState<CategoryDomain | 'all'>('all');
+  const [tierFilter, setTierFilter] = useState<AttentionTier | 'all'>('all');
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [newRelationship, setNewRelationship] = useState<string>('friend');
@@ -35,12 +53,30 @@ export default function PeopleScreen() {
 
   const loadPeople = useCallback(async () => {
     if (!user) return;
-    const { data } = await supabase
-      .from('lifeos_people')
-      .select('*')
-      .eq('owner_id', user.id)
-      .order('last_interaction_at', { ascending: false, nullsFirst: false });
-    if (data) setPeople(data);
+    const [peopleRes, catRes] = await Promise.all([
+      supabase
+        .from('lifeos_people')
+        .select('*')
+        .eq('owner_id', user.id)
+        .is('deleted_at', null)
+        .order('last_interaction_at', { ascending: false, nullsFirst: false }),
+      supabase
+        .from('lifeos_category_assignments')
+        .select('*')
+        .eq('owner_id', user.id)
+        .is('deleted_at', null),
+    ]);
+
+    if (peopleRes.data) setPeople(peopleRes.data);
+
+    if (catRes.data) {
+      const map: Record<string, CategoryAssignment[]> = {};
+      for (const ca of catRes.data) {
+        if (!map[ca.person_id]) map[ca.person_id] = [];
+        map[ca.person_id].push(ca);
+      }
+      setCategoryMap(map);
+    }
   }, [user]);
 
   useEffect(() => { loadPeople(); }, [loadPeople]);
@@ -74,17 +110,41 @@ export default function PeopleScreen() {
     loadPeople();
   }
 
-  const filtered = search
-    ? people.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-    : people;
+  const filtered = people.filter(p => {
+    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (tierFilter !== 'all' && p.attention_tier !== tierFilter) return false;
+    if (domainFilter !== 'all') {
+      const cats = categoryMap[p.id] ?? [];
+      if (!cats.some(c => c.category_domain === domainFilter)) return false;
+    }
+    return true;
+  });
 
-  function relColor(rel: string | null) {
-    switch (rel) {
-      case 'family': return '#FF6B6B';
-      case 'friend': return brand.primary;
-      case 'colleague': return brand.accent;
-      case 'acquaintance': return brand.warning;
-      default: return colors.textSecondary;
+  function getDomainColor(personId: string): string {
+    const cats = categoryMap[personId] ?? [];
+    const primary = cats.find(c => c.is_primary) ?? cats[0];
+    if (!primary) return colors.textSecondary;
+    const domain = DOMAIN_FILTERS.find(d => d.key === primary.category_domain);
+    return domain?.color ?? colors.textSecondary;
+  }
+
+  function getDomainLabels(personId: string): string {
+    const cats = categoryMap[personId] ?? [];
+    if (cats.length === 0) return 'untagged';
+    return cats.map(c => {
+      const d = DOMAIN_FILTERS.find(df => df.key === c.category_domain);
+      const sub = c.subcategory ? c.subcategory.replace(/_/g, ' ') : '';
+      return sub || d?.label || c.category_domain;
+    }).join(', ');
+  }
+
+  function tierBadge(tier: AttentionTier): { label: string; color: string } {
+    switch (tier) {
+      case 'high_attention': return { label: 'HIGH', color: brand.danger };
+      case 'active_maintenance': return { label: 'ACTIVE', color: brand.success };
+      case 'needs_attention': return { label: 'NEEDS ATTN', color: brand.warning };
+      case 'private_do_not_analyze': return { label: 'PRIVATE', color: colors.textSecondary };
+      default: return { label: '', color: '' };
     }
   }
 
@@ -117,34 +177,88 @@ export default function PeopleScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Domain filter row */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterRow}>
+        {DOMAIN_FILTERS.map(d => (
+          <TouchableOpacity
+            key={d.key}
+            style={[
+              styles.filterChip,
+              { borderColor: colors.surfaceBorder },
+              domainFilter === d.key && { backgroundColor: d.color + '22', borderColor: d.color },
+            ]}
+            onPress={() => setDomainFilter(domainFilter === d.key ? 'all' : d.key)}
+          >
+            <Text style={[
+              styles.filterChipText,
+              { color: colors.textSecondary },
+              domainFilter === d.key && { color: d.color },
+            ]}>
+              {d.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <View style={styles.filterSpacer} />
+        {TIER_FILTERS.filter(t => t.key !== 'all').map(t => (
+          <TouchableOpacity
+            key={t.key}
+            style={[
+              styles.filterChip,
+              { borderColor: colors.surfaceBorder },
+              tierFilter === t.key && { backgroundColor: brand.primary + '22', borderColor: brand.primary },
+            ]}
+            onPress={() => setTierFilter(tierFilter === t.key ? 'all' : t.key)}
+          >
+            <Text style={[
+              styles.filterChipText,
+              { color: colors.textSecondary },
+              tierFilter === t.key && { color: brand.primary },
+            ]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       <FlatList
         data={filtered}
         keyExtractor={p => p.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.personRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
-            onPress={() => router.push(`/person/${item.id}`)}
-          >
-            <View style={[styles.avatar, { backgroundColor: relColor(item.relationship) + '22' }]}>
-              <Text style={[styles.avatarText, { color: relColor(item.relationship) }]}>
-                {item.name.charAt(0).toUpperCase()}
+        renderItem={({ item }) => {
+          const dColor = getDomainColor(item.id);
+          const tier = tierBadge(item.attention_tier);
+          return (
+            <TouchableOpacity
+              style={[styles.personRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
+              onPress={() => router.push(`/person/${item.id}`)}
+            >
+              <View style={[styles.avatar, { backgroundColor: dColor + '22' }]}>
+                <Text style={[styles.avatarText, { color: dColor }]}>
+                  {item.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.personInfo}>
+                <View style={styles.nameRow}>
+                  <Text style={[styles.personName, { color: colors.text }]}>{item.name}</Text>
+                  {tier.label ? (
+                    <View style={[styles.tierBadge, { backgroundColor: tier.color + '22' }]}>
+                      <Text style={[styles.tierBadgeText, { color: tier.color }]}>{tier.label}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={[styles.personMeta, { color: colors.textSecondary }]}>
+                  {getDomainLabels(item.id)}
+                  {item.company ? ` · ${item.company}` : ''}
+                  {' · '}
+                  {item.total_interactions} interaction{item.total_interactions !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <Text style={[styles.lastSeen, { color: colors.textSecondary }]}>
+                {timeAgo(item.last_interaction_at)}
               </Text>
-            </View>
-            <View style={styles.personInfo}>
-              <Text style={[styles.personName, { color: colors.text }]}>{item.name}</Text>
-              <Text style={[styles.personMeta, { color: colors.textSecondary }]}>
-                {item.relationship ?? 'contact'}
-                {item.company ? ` · ${item.company}` : ''}
-                {' · '}
-                {item.total_interactions} interaction{item.total_interactions !== 1 ? 's' : ''}
-              </Text>
-            </View>
-            <Text style={[styles.lastSeen, { color: colors.textSecondary }]}>
-              {timeAgo(item.last_interaction_at)}
-            </Text>
-          </TouchableOpacity>
-        )}
+            </TouchableOpacity>
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>No people yet</Text>
@@ -248,7 +362,12 @@ const styles = StyleSheet.create({
   },
   addBtn: { width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   addBtnText: { color: '#fff', fontSize: 22, fontWeight: '600' },
-  listContent: { paddingHorizontal: 16, paddingBottom: 40, flexGrow: 1 },
+  filterScroll: { maxHeight: 44, paddingLeft: 16 },
+  filterRow: { gap: 8, paddingRight: 16, alignItems: 'center' },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  filterChipText: { fontSize: 12, fontWeight: '600' },
+  filterSpacer: { width: 1, height: 20, backgroundColor: '#334155', marginHorizontal: 4 },
+  listContent: { paddingHorizontal: 16, paddingBottom: 40, paddingTop: 12, flexGrow: 1 },
   personRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -260,7 +379,10 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   avatarText: { fontSize: 18, fontWeight: '700' },
   personInfo: { flex: 1 },
-  personName: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+  personName: { fontSize: 15, fontWeight: '600' },
+  tierBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  tierBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   personMeta: { fontSize: 12 },
   lastSeen: { fontSize: 12 },
   emptyContainer: { alignItems: 'center', paddingTop: 60 },

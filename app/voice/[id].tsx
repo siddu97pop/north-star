@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
-import type { VoiceNote, Transcription, Extraction } from '@/lib/types';
+import type { VoiceNote, Transcription, Extraction, InteractionExtraction } from '@/lib/types';
 
 export default function VoiceNoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -14,6 +14,7 @@ export default function VoiceNoteDetail() {
   const [note, setNote] = useState<VoiceNote | null>(null);
   const [transcript, setTranscript] = useState<Transcription | null>(null);
   const [extraction, setExtraction] = useState<Extraction | null>(null);
+  const [interactionExtraction, setInteractionExtraction] = useState<InteractionExtraction | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,14 +34,16 @@ export default function VoiceNoteDetail() {
   }, [id]);
 
   async function loadData() {
-    const [noteRes, transRes, extRes] = await Promise.all([
+    const [noteRes, transRes, extRes, intExtRes] = await Promise.all([
       supabase.from('lifeos_voice_notes').select('*').eq('id', id).single(),
       supabase.from('lifeos_transcriptions').select('*').eq('voice_note_id', id).single(),
       supabase.from('lifeos_extractions').select('*').eq('voice_note_id', id).single(),
+      supabase.from('lifeos_interaction_extractions').select('*').eq('voice_note_id', id).order('created_at', { ascending: false }).limit(1).single(),
     ]);
     if (noteRes.data) setNote(noteRes.data);
     if (transRes.data) setTranscript(transRes.data);
     if (extRes.data) setExtraction(extRes.data);
+    if (intExtRes.data) setInteractionExtraction(intExtRes.data);
     setLoading(false);
   }
 
@@ -159,6 +162,26 @@ export default function VoiceNoteDetail() {
           )}
         </>
       )}
+
+      {/* Review Extraction button */}
+      {interactionExtraction && interactionExtraction.review_status === 'pending' && (
+        <TouchableOpacity
+          style={[styles.reviewBtn, { backgroundColor: brand.warning }]}
+          onPress={() => router.push(`/voice/review/${interactionExtraction.id}`)}
+        >
+          <Text style={styles.reviewBtnText}>Review AI Extraction</Text>
+        </TouchableOpacity>
+      )}
+      {interactionExtraction && interactionExtraction.review_status !== 'pending' && (
+        <TouchableOpacity
+          style={[styles.reviewBtn, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, borderWidth: 1 }]}
+          onPress={() => router.push(`/voice/review/${interactionExtraction.id}`)}
+        >
+          <Text style={[styles.reviewBtnText, { color: colors.text }]}>
+            View Review ({interactionExtraction.review_status})
+          </Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -185,4 +208,6 @@ const styles = StyleSheet.create({
   tag: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
   actionRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
   bullet: { fontSize: 8, marginTop: 6 },
+  reviewBtn: { height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
+  reviewBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

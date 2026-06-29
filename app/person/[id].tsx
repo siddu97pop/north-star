@@ -9,26 +9,52 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { fetchPersonBriefing } from '@/lib/api';
 import { buildLocalBriefing } from '@/lib/briefing';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
-import type { CalendarEvent, Interaction, Person } from '@/lib/types';
+import CategoryPicker from '@/components/CategoryPicker';
+import FunctionPicker from '@/components/FunctionPicker';
+import SensitiveMemoryCard from '@/components/SensitiveMemoryCard';
+import type {
+  CalendarEvent,
+  CategoryAssignment,
+  CategoryDomain,
+  AttentionTier,
+  FunctionType,
+  Interaction,
+  Person,
+  PersonPreferences,
+  RelationshipFunction,
+  SensitiveMemory,
+} from '@/lib/types';
 
 const RELATIONSHIPS = ['family', 'friend', 'colleague', 'acquaintance', 'other'] as const;
+
+const ATTENTION_TIERS: { key: AttentionTier; label: string; desc: string; color: string }[] = [
+  { key: 'high_attention', label: 'High Attention', desc: 'Active focus', color: brand.danger },
+  { key: 'active_maintenance', label: 'Active Maintenance', desc: 'Regular check-ins', color: brand.success },
+  { key: 'light_touch', label: 'Light Touch', desc: 'Occasional contact', color: brand.primary },
+  { key: 'needs_attention', label: 'Needs Attention', desc: 'Overdue for contact', color: brand.warning },
+  { key: 'private_do_not_analyze', label: 'Private', desc: 'Excluded from AI', color: '#6B7280' },
+];
 
 export default function PersonDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colorScheme = useColorScheme() ?? 'dark';
   const colors = Colors[colorScheme];
-  const { session } = useAuth();
+  const { session, user } = useAuth();
 
   const [person, setPerson] = useState<Person | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([]);
+  const [categories, setCategories] = useState<CategoryAssignment[]>([]);
+  const [functions, setFunctions] = useState<RelationshipFunction[]>([]);
+  const [sensitiveMemories, setSensitiveMemories] = useState<SensitiveMemory[]>([]);
+  const [preferences, setPreferences] = useState<PersonPreferences | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -40,6 +66,9 @@ export default function PersonDetail() {
   const [editRelationship, setEditRelationship] = useState<string>('friend');
   const [editCompany, setEditCompany] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editLinkedin, setEditLinkedin] = useState('');
+  const [editRoleTitle, setEditRoleTitle] = useState('');
+  const [editSummary, setEditSummary] = useState('');
 
   const loadPerson = useCallback(async () => {
     const personRes = await supabase.from('lifeos_people').select('*').eq('id', id).single();
@@ -50,8 +79,11 @@ export default function PersonDetail() {
       setEditRelationship(personRes.data.relationship ?? 'other');
       setEditCompany(personRes.data.company ?? '');
       setEditNotes(personRes.data.notes ?? '');
+      setEditLinkedin(personRes.data.linkedin_url ?? '');
+      setEditRoleTitle(personRes.data.primary_role_title ?? '');
+      setEditSummary(personRes.data.profile_summary_user ?? '');
 
-      const [interactionRes, attendeeRes] = await Promise.all([
+      const [interactionRes, attendeeRes, catRes, funcRes, sensRes, prefsRes] = await Promise.all([
         supabase
           .from('lifeos_interactions')
           .select('*')
@@ -69,9 +101,36 @@ export default function PersonDetail() {
               .filter(Boolean)
               .join(',')
           ),
+        supabase
+          .from('lifeos_category_assignments')
+          .select('*')
+          .eq('person_id', id)
+          .is('deleted_at', null),
+        supabase
+          .from('lifeos_relationship_functions')
+          .select('*')
+          .eq('person_id', id)
+          .is('deleted_at', null),
+        supabase
+          .from('lifeos_sensitive_memories')
+          .select('*')
+          .eq('person_id', id)
+          .eq('storage_consent_status', 'granted')
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('lifeos_person_preferences')
+          .select('*')
+          .eq('person_id', id)
+          .single(),
       ]);
 
       if (interactionRes.data) setInteractions(interactionRes.data);
+      if (catRes.data) setCategories(catRes.data);
+      if (funcRes.data) setFunctions(funcRes.data);
+      if (sensRes.data) setSensitiveMemories(sensRes.data);
+      if (prefsRes.data) setPreferences(prefsRes.data);
 
       const eventIds = (attendeeRes.data ?? []).map((item) => item.event_id);
 
@@ -97,29 +156,24 @@ export default function PersonDetail() {
     loadPerson();
   }, [loadPerson]);
 
-  function relColor(rel: string | null) {
-    switch (rel) {
-      case 'family':
-        return '#FF6B6B';
-      case 'friend':
-        return brand.primary;
-      case 'colleague':
-        return brand.accent;
-      case 'acquaintance':
-        return brand.warning;
-      default:
-        return colors.textSecondary;
+  function domainColor(domain: CategoryDomain): string {
+    switch (domain) {
+      case 'work': return brand.accent;
+      case 'personal': return brand.danger;
+      case 'other_strategic': return brand.warning;
     }
+  }
+
+  function primaryDomainColor(): string {
+    const primary = categories.find(c => c.is_primary) ?? categories[0];
+    return primary ? domainColor(primary.category_domain) : colors.textSecondary;
   }
 
   function sourceIcon(source: string) {
     switch (source) {
-      case 'voice_note':
-        return '🎙';
-      case 'calendar_event':
-        return '📅';
-      default:
-        return '✏️';
+      case 'voice_note': return '🎙';
+      case 'calendar_event': return '📅';
+      default: return '✏️';
     }
   }
 
@@ -127,17 +181,18 @@ export default function PersonDetail() {
     if (!person || !editName.trim()) return;
     setSaving(true);
 
-    const payload = {
-      name: editName.trim(),
-      normalized_name: editName.trim().toLowerCase(),
-      relationship: editRelationship,
-      company: editCompany.trim() || null,
-      notes: editNotes.trim() || null,
-    };
-
     const { data, error } = await supabase
       .from('lifeos_people')
-      .update(payload)
+      .update({
+        name: editName.trim(),
+        normalized_name: editName.trim().toLowerCase(),
+        relationship: editRelationship,
+        company: editCompany.trim() || null,
+        notes: editNotes.trim() || null,
+        linkedin_url: editLinkedin.trim() || null,
+        primary_role_title: editRoleTitle.trim() || null,
+        profile_summary_user: editSummary.trim() || null,
+      })
       .eq('id', person.id)
       .select('*')
       .single();
@@ -153,11 +208,84 @@ export default function PersonDetail() {
     setShowEdit(false);
   }
 
+  async function handleTierChange(tier: AttentionTier) {
+    if (!person) return;
+    const { data } = await supabase
+      .from('lifeos_people')
+      .update({ attention_tier: tier })
+      .eq('id', person.id)
+      .select('*')
+      .single();
+    if (data) setPerson(data);
+  }
+
+  async function handleAddCategory(domain: CategoryDomain, subcategory: string, isPrimary: boolean) {
+    if (!user || !person) return;
+    const { data } = await supabase
+      .from('lifeos_category_assignments')
+      .insert({
+        person_id: person.id,
+        owner_id: user.id,
+        category_domain: domain,
+        subcategory,
+        is_primary: isPrimary,
+      })
+      .select('*')
+      .single();
+    if (data) setCategories(prev => [...prev, data]);
+  }
+
+  async function handleRemoveCategory(catId: string) {
+    await supabase
+      .from('lifeos_category_assignments')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', catId);
+    setCategories(prev => prev.filter(c => c.id !== catId));
+  }
+
+  async function handleAddFunction(functionType: FunctionType) {
+    if (!user || !person) return;
+    const { data } = await supabase
+      .from('lifeos_relationship_functions')
+      .insert({
+        person_id: person.id,
+        owner_id: user.id,
+        function_type: functionType,
+      })
+      .select('*')
+      .single();
+    if (data) setFunctions(prev => [...prev, data]);
+  }
+
+  async function handleRemoveFunction(funcId: string) {
+    await supabase
+      .from('lifeos_relationship_functions')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', funcId);
+    setFunctions(prev => prev.filter(f => f.id !== funcId));
+  }
+
+  async function handleRevokeSensitiveMemory(memoryId: string) {
+    await supabase
+      .from('lifeos_sensitive_memories')
+      .update({ storage_consent_status: 'revoked', is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', memoryId);
+    setSensitiveMemories(prev => prev.filter(m => m.id !== memoryId));
+    if (user) {
+      await supabase.from('lifeos_audit_events').insert({
+        owner_id: user.id,
+        actor_type: 'user',
+        event_type: 'sensitive_memory_revoked',
+        object_type: 'sensitive_memory',
+        object_id: memoryId,
+        event_summary: 'User revoked consent for sensitive memory',
+      });
+    }
+  }
+
   async function handleBriefMe() {
     if (!person) return;
-
     setBriefingLoading(true);
-
     try {
       const result = await fetchPersonBriefing(person.id, session);
       setBriefing(result.briefing);
@@ -186,20 +314,20 @@ export default function PersonDetail() {
     );
   }
 
+  const activeTier = ATTENTION_TIERS.find(t => t.key === person.attention_tier) ?? ATTENTION_TIERS[2];
+
   return (
     <>
       <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
         <View style={styles.headerSection}>
-          <View style={[styles.avatar, { backgroundColor: relColor(person.relationship) + '22' }]}>
-            <Text style={[styles.avatarText, { color: relColor(person.relationship) }]}>
+          <View style={[styles.avatar, { backgroundColor: primaryDomainColor() + '22' }]}>
+            <Text style={[styles.avatarText, { color: primaryDomainColor() }]}>
               {person.name.charAt(0).toUpperCase()}
             </Text>
           </View>
           <Text style={[styles.name, { color: colors.text }]}>{person.name}</Text>
-          {person.relationship ? (
-            <View style={[styles.relBadge, { backgroundColor: relColor(person.relationship) + '22' }]}>
-              <Text style={[styles.relBadgeText, { color: relColor(person.relationship) }]}>{person.relationship}</Text>
-            </View>
+          {person.primary_role_title ? (
+            <Text style={[styles.roleTitle, { color: colors.textSecondary }]}>{person.primary_role_title}</Text>
           ) : null}
           {person.company ? <Text style={[styles.company, { color: colors.textSecondary }]}>{person.company}</Text> : null}
           <View style={styles.headerButtons}>
@@ -212,6 +340,53 @@ export default function PersonDetail() {
           </View>
         </View>
 
+        {/* Attention Tier */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Attention Tier</Text>
+          <View style={styles.tierRow}>
+            {ATTENTION_TIERS.map(t => (
+              <TouchableOpacity
+                key={t.key}
+                style={[
+                  styles.tierChip,
+                  { borderColor: colors.surfaceBorder },
+                  person.attention_tier === t.key && { backgroundColor: t.color + '22', borderColor: t.color },
+                ]}
+                onPress={() => handleTierChange(t.key)}
+              >
+                <Text style={[
+                  styles.tierChipText,
+                  { color: colors.textSecondary },
+                  person.attention_tier === t.key && { color: t.color },
+                ]}>
+                  {t.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Categories */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Categories</Text>
+          <CategoryPicker
+            assignments={categories}
+            onAdd={handleAddCategory}
+            onRemove={handleRemoveCategory}
+          />
+        </View>
+
+        {/* Relationship Functions */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Functions</Text>
+          <FunctionPicker
+            functions={functions}
+            onAdd={handleAddFunction}
+            onRemove={handleRemoveFunction}
+          />
+        </View>
+
+        {/* Briefing */}
         {briefingLoading ? (
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
             <ActivityIndicator color={brand.accent} />
@@ -245,6 +420,42 @@ export default function PersonDetail() {
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Last Seen</Text>
           </View>
         </View>
+
+        {/* User Summary */}
+        {person.profile_summary_user ? (
+          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>About</Text>
+            <Text style={[styles.bodyText, { color: colors.text }]}>{person.profile_summary_user}</Text>
+          </View>
+        ) : null}
+
+        {/* Sensitive Notes */}
+        {sensitiveMemories.length > 0 && (
+          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Sensitive Notes</Text>
+            {sensitiveMemories.map(m => (
+              <SensitiveMemoryCard key={m.id} memory={m} onRevoke={handleRevokeSensitiveMemory} />
+            ))}
+          </View>
+        )}
+
+        {/* Preferences */}
+        <TouchableOpacity
+          style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
+          onPress={() => router.push(`/person/preferences/${id}`)}
+        >
+          <View style={styles.prefsRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 2 }]}>Preferences</Text>
+              <Text style={[styles.prefsMeta, { color: colors.textSecondary }]}>
+                {preferences
+                  ? `Cadence: ${preferences.desired_contact_cadence_days ? `${preferences.desired_contact_cadence_days}d` : 'none'} · Reminders: ${preferences.reminder_policy} · AI: ${preferences.allow_ai_suggestions ? 'on' : 'off'}`
+                  : 'Tap to set contact cadence, AI controls, and more'}
+              </Text>
+            </View>
+            <Text style={[styles.prefsArrow, { color: colors.textSecondary }]}>›</Text>
+          </View>
+        </TouchableOpacity>
 
         {upcomingEvents.length > 0 ? (
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -311,7 +522,16 @@ export default function PersonDetail() {
               style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]}
               value={editName}
               onChangeText={setEditName}
-              placeholder="Correct the name"
+              placeholder="Name"
+              placeholderTextColor={colors.textSecondary}
+            />
+
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Role / Title</Text>
+            <TextInput
+              style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]}
+              value={editRoleTitle}
+              onChangeText={setEditRoleTitle}
+              placeholder="e.g. VP Engineering at Google"
               placeholderTextColor={colors.textSecondary}
             />
 
@@ -347,6 +567,27 @@ export default function PersonDetail() {
               onChangeText={setEditCompany}
               placeholder="Optional"
               placeholderTextColor={colors.textSecondary}
+            />
+
+            <Text style={[styles.label, { color: colors.textSecondary }]}>LinkedIn URL</Text>
+            <TextInput
+              style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]}
+              value={editLinkedin}
+              onChangeText={setEditLinkedin}
+              placeholder="https://linkedin.com/in/..."
+              placeholderTextColor={colors.textSecondary}
+              autoCapitalize="none"
+              keyboardType="url"
+            />
+
+            <Text style={[styles.label, { color: colors.textSecondary }]}>About This Person</Text>
+            <TextInput
+              style={[styles.input, styles.textArea, { color: colors.text, borderColor: colors.surfaceBorder }]}
+              value={editSummary}
+              onChangeText={setEditSummary}
+              placeholder="Brief summary — who they are and why they matter to you"
+              placeholderTextColor={colors.textSecondary}
+              multiline
             />
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Notes</Text>
@@ -389,9 +630,8 @@ const styles = StyleSheet.create({
   avatar: { width: 78, height: 78, borderRadius: 39, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   avatarText: { fontSize: 34, fontWeight: '700' },
   name: { fontSize: 28, fontWeight: '700' },
-  relBadge: { marginTop: 10, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999 },
-  relBadgeText: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
-  company: { fontSize: 14, marginTop: 8 },
+  roleTitle: { fontSize: 14, marginTop: 4 },
+  company: { fontSize: 14, marginTop: 4 },
   headerButtons: { flexDirection: 'row', gap: 10, marginTop: 16 },
   editBtn: { minWidth: 92, height: 42, borderRadius: 10, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
   editBtnText: { color: '#fff', fontWeight: '700' },
@@ -401,6 +641,9 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '600', marginBottom: 8 },
   briefingHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 8 },
   briefingMeta: { fontSize: 12 },
+  tierRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tierChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  tierChipText: { fontSize: 11, fontWeight: '600' },
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   statCard: { flex: 1, padding: 16, borderRadius: 12, borderWidth: 1, alignItems: 'center' },
   statNum: { fontSize: 24, fontWeight: '800', marginBottom: 4 },
@@ -416,7 +659,7 @@ const styles = StyleSheet.create({
   interactionDate: { fontSize: 12, marginTop: 3 },
   sentiment: { fontSize: 18 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, maxHeight: '80%' },
+  modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, maxHeight: '85%' },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 20 },
   label: { fontSize: 13, fontWeight: '500', marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, marginBottom: 16 },
@@ -426,4 +669,7 @@ const styles = StyleSheet.create({
   relChipText: { fontSize: 13, fontWeight: '600' },
   modalActions: { flexDirection: 'row', gap: 12, marginTop: 12, marginBottom: 40 },
   modalBtn: { flex: 1, height: 48, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  prefsRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  prefsMeta: { fontSize: 12, marginTop: 2 },
+  prefsArrow: { fontSize: 22, fontWeight: '300' },
 });

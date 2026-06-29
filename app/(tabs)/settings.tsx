@@ -9,6 +9,7 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -44,6 +45,11 @@ export default function SettingsScreen() {
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [managingUser, setManagingUser] = useState<string | null>(null);
+
+  const [globalAllowAI, setGlobalAllowAI] = useState(true);
+  const [globalSensitiveBriefing, setGlobalSensitiveBriefing] = useState(false);
+  const [globalBriefingDepth, setGlobalBriefingDepth] = useState('standard');
+  const [savingGlobal, setSavingGlobal] = useState(false);
 
   const loadUpcomingEvents = useCallback(async () => {
     if (!user) return;
@@ -93,9 +99,70 @@ export default function SettingsScreen() {
 
   useEffect(() => { loadPendingUsers(); }, [loadPendingUsers]);
 
+  const loadGlobalDefaults = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('lifeos_person_preferences')
+      .select('allow_ai_suggestions, allow_sensitive_in_briefings, briefing_depth')
+      .eq('owner_id', user.id)
+      .eq('person_id', '00000000-0000-0000-0000-000000000000');
+
+    if (data && data.length > 0) {
+      setGlobalAllowAI(data[0].allow_ai_suggestions);
+      setGlobalSensitiveBriefing(data[0].allow_sensitive_in_briefings);
+      setGlobalBriefingDepth(data[0].briefing_depth);
+    }
+  }, [user]);
+
+  useEffect(() => { loadGlobalDefaults(); }, [loadGlobalDefaults]);
+
+  async function handleSaveGlobalDefaults() {
+    if (!user) return;
+    setSavingGlobal(true);
+    const globalId = '00000000-0000-0000-0000-000000000000';
+    const payload = {
+      person_id: globalId,
+      owner_id: user.id,
+      allow_ai_suggestions: globalAllowAI,
+      allow_sensitive_in_briefings: globalSensitiveBriefing,
+      briefing_depth: globalBriefingDepth,
+      reminder_policy: 'normal',
+      boundary_state: 'none',
+    };
+
+    const { data: existing } = await supabase
+      .from('lifeos_person_preferences')
+      .select('id')
+      .eq('owner_id', user.id)
+      .eq('person_id', globalId);
+
+    if (existing && existing.length > 0) {
+      await supabase
+        .from('lifeos_person_preferences')
+        .update(payload)
+        .eq('id', existing[0].id);
+    } else {
+      await supabase
+        .from('lifeos_person_preferences')
+        .insert(payload);
+    }
+
+    await supabase.from('lifeos_audit_events').insert({
+      owner_id: user.id,
+      actor_type: 'user',
+      event_type: 'global_sensitivity_defaults_updated',
+      object_type: 'person_preferences',
+      object_id: globalId,
+      event_summary: 'Global sensitivity defaults saved',
+    });
+
+    setSavingGlobal(false);
+    Alert.alert('Saved', 'Global sensitivity defaults updated.');
+  }
+
   async function onRefresh() {
     setRefreshing(true);
-    await Promise.all([loadUpcomingEvents(), loadPendingUsers()]);
+    await Promise.all([loadUpcomingEvents(), loadPendingUsers(), loadGlobalDefaults()]);
     setRefreshing(false);
   }
 
@@ -367,6 +434,69 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Sensitivity & Privacy */}
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>SENSITIVITY & PRIVACY</Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+        <View style={styles.sensitivitySection}>
+          <Text style={[styles.sensitivityDesc, { color: colors.textSecondary }]}>
+            These defaults apply to all people unless overridden in their individual preferences.
+          </Text>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchLabel, { color: colors.text }]}>Allow AI suggestions</Text>
+              <Text style={[styles.switchDesc, { color: colors.textSecondary }]}>
+                AI can suggest actions and recommendations
+              </Text>
+            </View>
+            <Switch value={globalAllowAI} onValueChange={setGlobalAllowAI} trackColor={{ true: brand.primary }} />
+          </View>
+
+          <View style={[styles.switchRow, { marginTop: 14 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchLabel, { color: colors.text }]}>Include sensitive in briefings</Text>
+              <Text style={[styles.switchDesc, { color: colors.textSecondary }]}>
+                Show sensitive notes in pre-conversation briefings
+              </Text>
+            </View>
+            <Switch value={globalSensitiveBriefing} onValueChange={setGlobalSensitiveBriefing} trackColor={{ true: brand.primary }} />
+          </View>
+
+          <View style={{ marginTop: 14 }}>
+            <Text style={[styles.switchLabel, { color: colors.text }]}>Default briefing depth</Text>
+            <View style={[styles.depthRow, { marginTop: 8 }]}>
+              {['minimal', 'standard', 'detailed'].map(d => (
+                <TouchableOpacity
+                  key={d}
+                  style={[
+                    styles.depthChip,
+                    { borderColor: colors.surfaceBorder },
+                    globalBriefingDepth === d && { backgroundColor: brand.primary + '22', borderColor: brand.primary },
+                  ]}
+                  onPress={() => setGlobalBriefingDepth(d)}
+                >
+                  <Text style={[
+                    styles.depthChipText,
+                    { color: colors.textSecondary },
+                    globalBriefingDepth === d && { color: brand.primary },
+                  ]}>
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.saveGlobalBtn, { backgroundColor: brand.primary }]}
+            onPress={handleSaveGlobalDefaults}
+            disabled={savingGlobal}
+          >
+            <Text style={styles.saveGlobalBtnText}>{savingGlobal ? 'Saving...' : 'Save Defaults'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* About */}
       <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>ABOUT</Text>
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -439,4 +569,14 @@ const styles = StyleSheet.create({
   approveBtnText: { fontSize: 12, fontWeight: '700' },
   rejectBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
   rejectBtnText: { fontSize: 12, fontWeight: '600' },
+  sensitivitySection: { padding: 16 },
+  sensitivityDesc: { fontSize: 12, marginBottom: 14 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  switchLabel: { fontSize: 14, fontWeight: '600' },
+  switchDesc: { fontSize: 12, marginTop: 2 },
+  depthRow: { flexDirection: 'row', gap: 8 },
+  depthChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1 },
+  depthChipText: { fontSize: 12, fontWeight: '600' },
+  saveGlobalBtn: { height: 42, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  saveGlobalBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });
