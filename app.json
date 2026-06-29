@@ -1,17 +1,17 @@
 {
   "expo": {
-    "name": "Life OS",
-    "slug": "life-os",
+    "name": "North Star",
+    "slug": "north-star",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "lifeos",
+    "scheme": "northstar",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "tech.lexitools.lifeos",
+      "bundleIdentifier": "tech.lexitools.northstar",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Life OS needs microphone access to record voice notes."
+        "NSMicrophoneUsageDescription": "North Star needs microphone access to record voice notes."
       }
     },
     "android": {
@@ -21,7 +21,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "package": "tech.lexitools.lifeos",
+      "package": "tech.lexitools.northstar",
       "permissions": [
         "RECORD_AUDIO"
       ]
@@ -44,7 +44,7 @@
       [
         "expo-av",
         {
-          "microphonePermission": "Life OS needs microphone access to record voice notes."
+          "microphonePermission": "North Star needs microphone access to record voice notes."
         }
       ],
       "expo-asset"
