@@ -9,7 +9,7 @@ export interface InviteSendResponse {
 
 export interface BriefingResponse {
   ok: boolean;
-  briefing: string;
+  briefing: import('./types').Briefing;
   source: 'anthropic' | 'fallback';
 }
 
@@ -103,4 +103,60 @@ export async function generatePersonRecommendations(personId: string, session?: 
 
 export async function fetchPersonRelationshipState(personId: string, session?: Session | null) {
   return apiFetch<RelationshipStateResponse>(`/api/people/${personId}/state`, {}, session);
+}
+
+export interface PendingConfirmationsResponse {
+  ok: boolean;
+  total: number;
+  counts: {
+    extractions: number;
+    actions: number;
+    signals: number;
+    milestones: number;
+    recommendations: number;
+  };
+}
+
+export interface ExportResponse {
+  ok: boolean;
+  jobId: string;
+  export: {
+    exportedAt: string;
+    exportScope: string;
+    includeSensitive: boolean;
+    data: Record<string, unknown[]>;
+  };
+}
+
+export interface DeletionResponse {
+  ok: boolean;
+  deletionRequestId: string;
+  deletionMode: string;
+  cascades: string[];
+}
+
+export async function fetchPendingConfirmations(session?: Session | null) {
+  return apiFetch<PendingConfirmationsResponse>('/api/dashboard/pending-confirmations', {}, session);
+}
+
+export async function requestDataExport(
+  params: { scope?: string; includeSensitive?: boolean },
+  session?: Session | null
+) {
+  return apiFetch<ExportResponse>(
+    '/api/export',
+    { method: 'POST', body: JSON.stringify(params) },
+    session
+  );
+}
+
+export async function requestDeletion(
+  params: { objectType: string; objectId: string; deletionMode?: string },
+  session?: Session | null
+) {
+  return apiFetch<DeletionResponse>(
+    '/api/deletion',
+    { method: 'POST', body: JSON.stringify(params) },
+    session
+  );
 }

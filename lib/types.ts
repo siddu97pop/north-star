@@ -180,6 +180,47 @@ export interface RelationshipState {
   created_at: string;
   superseded_at: string | null;
 }
+
+export type BriefingItemType =
+  | 'context' | 'last_interaction' | 'pending_action' | 'sensitive_context' | 'topics_to_remember'
+  | 'topics_to_avoid' | 'milestones' | 'recommendations' | 'relationship_state'
+  | 'suggested_opener' | 'data_limitation';
+
+export interface BriefingItem {
+  id: string;
+  briefing_id: string;
+  owner_id: string;
+  item_type: BriefingItemType;
+  item_title: string;
+  item_text: string;
+  source_object_type: string | null;
+  source_object_id: string | null;
+  source_label: string;
+  source_date: string | null;
+  confidence_level: ConfidenceLevel;
+  sensitivity_level: SensitivityLevel;
+  visibility_mode: 'hidden' | 'summary_only' | 'full_if_unlocked' | 'visible' | 'never';
+  user_can_hide: boolean;
+  created_at: string;
+}
+
+export interface Briefing {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  briefing_type: 'pre_conversation' | 'profile_review' | 'weekly_review';
+  request_context: string | null;
+  briefing_summary: string;
+  model_name: string;
+  prompt_version: string;
+  sensitive_content_included: boolean;
+  sensitive_content_unlock_required: boolean;
+  sensitive_items_suppressed: number;
+  generation_status: 'complete' | 'failed' | 'superseded';
+  created_at: string;
+  deleted_at: string | null;
+  items: BriefingItem[];
+}
 export type SensitivityLevel = 'none_low' | 'personal' | 'sensitive_lite' | 'sensitive' | 'restricted';
 export type ReviewStatus = 'pending' | 'reviewed' | 'partially_reviewed' | 'skipped';
 export type FieldType = 'person' | 'topic' | 'summary' | 'action_item' | 'category_suggestion' | 'sensitive_memory' | 'signal' | 'milestone';
@@ -427,6 +468,31 @@ export interface InteractionStat {
   this_year: number;
   all_time: number;
   last_seen: string | null;
+}
+
+export interface ExportJob {
+  id: string;
+  owner_id: string;
+  export_scope: string;
+  include_sensitive: boolean;
+  export_format: string;
+  status: 'requested' | 'processing' | 'completed' | 'failed';
+  file_path: string | null;
+  expires_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface DeletionRequest {
+  id: string;
+  owner_id: string;
+  target_object_type: string;
+  target_object_id: string;
+  deletion_mode: string;
+  status: 'requested' | 'processing' | 'completed';
+  ai_context_exclusion_completed: boolean;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export interface InviteRecord {

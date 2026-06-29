@@ -14,7 +14,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { fetchPersonBriefing, fetchPersonRelationshipState, generatePersonRecommendations } from '@/lib/api';
-import { buildLocalBriefing } from '@/lib/briefing';
+import { buildLocalStructuredBriefing } from '@/lib/briefing';
 import { loadRecommendations } from '@/lib/recommendations';
 import { computeLocalRelationshipState } from '@/lib/relationship-state';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -25,9 +25,12 @@ import SensitiveMemoryCard from '@/components/SensitiveMemoryCard';
 import ActionItemCard from '@/components/ActionItemCard';
 import RecommendationCard from '@/components/RecommendationCard';
 import RelationshipStateCard from '@/components/RelationshipStateCard';
+import BriefingItemCard from '@/components/BriefingItemCard';
 import type {
   ActionItem,
   ActionStatus,
+  Briefing,
+  BriefingItem,
   CalendarEvent,
   CategoryAssignment,
   CategoryDomain,
@@ -80,7 +83,8 @@ export default function PersonDetail() {
   const [showEdit, setShowEdit] = useState(false);
   const [showMilestone, setShowMilestone] = useState(false);
   const [showStateOverride, setShowStateOverride] = useState(false);
-  const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefing, setBriefing] = useState<Briefing | null>(null);
+  const [briefingHistory, setBriefingHistory] = useState<Briefing[]>([]);
   const [briefingSource, setBriefingSource] = useState<'anthropic' | 'fallback' | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
@@ -98,6 +102,25 @@ export default function PersonDetail() {
   const [overrideHealth, setOverrideHealth] = useState<RelationshipHealthState>('unknown');
   const [overrideMomentum, setOverrideMomentum] = useState<RelationshipMomentumState>('unknown');
   const [overrideDormancy, setOverrideDormancy] = useState<RelationshipDormancyState>('active');
+
+  const loadBriefingHistory = useCallback(async (preferredId?: string) => {
+    const { data: rows } = await supabase.from('lifeos_briefings').select('*')
+      .eq('person_id', id).eq('generation_status', 'complete').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(8);
+    if (!rows?.length) {
+      setBriefingHistory([]);
+      if (!preferredId) setBriefing(null);
+      return;
+    }
+    const { data: itemRows } = await supabase.from('lifeos_briefing_items').select('*')
+      .in('briefing_id', rows.map(row => row.id)).order('created_at');
+    const history = rows.map(row => ({
+      ...row,
+      items: (itemRows ?? []).filter(item => item.briefing_id === row.id),
+    })) as Briefing[];
+    setBriefingHistory(history);
+    setBriefing(history.find(item => item.id === preferredId) ?? history[0]);
+  }, [id]);
 
   const loadPerson = useCallback(async () => {
     const personRes = await supabase.from('lifeos_people').select('*').eq('id', id).single();
@@ -184,6 +207,7 @@ export default function PersonDetail() {
       if (actionsRes.data) setActions(actionsRes.data as ActionItem[]);
       if (milestonesRes.data) setMilestones(milestonesRes.data as Milestone[]);
       setRecommendations(await loadRecommendations(id, 3).catch(() => []));
+      await loadBriefingHistory();
 
       try {
         const result = await fetchPersonRelationshipState(id, session);
@@ -240,7 +264,7 @@ export default function PersonDetail() {
     }
 
     setLoading(false);
-  }, [id, session]);
+  }, [id, session, loadBriefingHistory]);
 
   useEffect(() => {
     loadPerson();
@@ -374,18 +398,86 @@ export default function PersonDetail() {
   }
 
   async function handleBriefMe() {
-    if (!person) return;
+    if (!person || !user) return;
+    if (person.is_private_do_not_analyze) {
+      Alert.alert('Briefing disabled', 'This person is marked Private / Do Not Analyse.');
+      return;
+    }
     setBriefingLoading(true);
     try {
       const result = await fetchPersonBriefing(person.id, session);
+      if (!result.briefing || typeof result.briefing !== 'object' || !Array.isArray(result.briefing.items)) {
+        throw new Error('Structured briefing API is not available');
+      }
       setBriefing(result.briefing);
+      setBriefingHistory(prev => [result.briefing, ...prev.filter(item => item.id !== result.briefing.id)].slice(0, 8));
       setBriefingSource(result.source);
     } catch (_error) {
-      setBriefing(buildLocalBriefing({ person, interactions, upcomingEvents }));
+      const local = buildLocalStructuredBriefing({
+        person, interactions, actions, milestones, sensitiveMemories, relationshipState, recommendations, preferences,
+      });
+      const { data: saved, error } = await supabase.from('lifeos_briefings').insert({
+        person_id: person.id,
+        owner_id: user.id,
+        briefing_type: 'pre_conversation',
+        briefing_summary: local.summary,
+        model_name: 'deterministic_fallback',
+        prompt_version: 'north_star_briefing_v1',
+        sensitive_content_included: local.sensitiveContentIncluded,
+        sensitive_content_unlock_required: local.items.some(item => item.visibility_mode === 'full_if_unlocked'),
+        sensitive_items_suppressed: local.sensitiveItemsSuppressed,
+        generation_status: 'complete',
+      }).select('*').single();
+      if (error || !saved) {
+        Alert.alert('Could not save briefing', error?.message ?? 'Please try again.');
+        setBriefingLoading(false);
+        return;
+      }
+      const { data: savedItems, error: itemError } = await supabase.from('lifeos_briefing_items').insert(
+        local.items.map(item => ({ briefing_id: saved.id, owner_id: user.id, ...item }))
+      ).select('*');
+      if (itemError) {
+        Alert.alert('Could not save briefing items', itemError.message);
+        setBriefingLoading(false);
+        return;
+      }
+      const localBriefing = { ...saved, items: savedItems ?? [] } as Briefing;
+      setBriefing(localBriefing);
+      setBriefingHistory(prev => [localBriefing, ...prev.filter(item => item.id !== localBriefing.id)].slice(0, 8));
       setBriefingSource('fallback');
+      await supabase.from('lifeos_audit_events').insert({
+        owner_id: user.id,
+        actor_type: 'system',
+        event_type: 'briefing_generated',
+        object_type: 'briefing',
+        object_id: saved.id,
+        event_summary: `Generated structured briefing with ${savedItems?.length ?? 0} items; ${local.sensitiveItemsSuppressed} private items excluded`,
+      });
     } finally {
       setBriefingLoading(false);
     }
+  }
+
+  function openBriefingSource(item: BriefingItem) {
+    if (!item.source_object_id) return;
+    if (item.source_object_type === 'interaction') router.push(`/interaction/${item.source_object_id}`);
+    else if (item.source_object_type === 'action_item') router.push('/actions');
+    else if (item.source_object_type === 'recommendation') router.push('/recommendations');
+  }
+
+  async function hideBriefingItem(item: BriefingItem) {
+    const { error } = await supabase.from('lifeos_briefing_items').update({ visibility_mode: 'hidden' }).eq('id', item.id);
+    if (error) {
+      Alert.alert('Could not hide briefing item', error.message);
+      return;
+    }
+    const update = (entry: Briefing) => ({ ...entry, items: entry.items.map(current => current.id === item.id ? { ...current, visibility_mode: 'hidden' as const } : current) });
+    setBriefing(prev => prev ? update(prev) : null);
+    setBriefingHistory(prev => prev.map(update));
+    if (user) await supabase.from('lifeos_audit_events').insert({
+      owner_id: user.id, actor_type: 'user', event_type: 'briefing_item_hidden', object_type: 'briefing_item',
+      object_id: item.id, event_summary: 'User hid a briefing item',
+    });
   }
 
   async function handleGenerateRecommendations() {
@@ -628,12 +720,52 @@ export default function PersonDetail() {
         ) : briefing ? (
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
             <View style={styles.briefingHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Briefing</Text>
-              <Text style={[styles.briefingMeta, { color: colors.textSecondary }]}>
-                {briefingSource === 'anthropic' ? 'AI summary' : 'Local fallback'}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 2 }]}>Conversation Briefing</Text>
+                <Text style={[styles.briefingMeta, { color: colors.textSecondary }]}>
+                  {new Date(briefing.created_at).toLocaleString()} · {briefingSource === 'anthropic' || briefing.model_name.includes('claude') ? 'AI-polished' : 'Source-grounded'}
+                </Text>
+              </View>
+              <TouchableOpacity style={[styles.regenerateButton, { borderColor: colors.surfaceBorder }]} onPress={handleBriefMe} accessibilityRole="button" accessibilityLabel="Regenerate conversation briefing">
+                <Text style={[styles.regenerateText, { color: brand.primaryLight }]}>Regenerate</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={[styles.bodyText, { color: colors.text }]}>{briefing}</Text>
+            <Text style={[styles.briefingSummary, { color: colors.textSecondary }]}>{briefing.briefing_summary}</Text>
+            {briefing.sensitive_items_suppressed > 0 ? (
+              <View style={[styles.privacyNotice, { borderColor: colors.surfaceBorder }]}>
+                <Text style={[styles.privacyNoticeText, { color: colors.textSecondary }]}>
+                  {briefing.sensitive_items_suppressed} private item{briefing.sensitive_items_suppressed === 1 ? '' : 's'} excluded by your briefing settings.
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.briefingItems}>
+              {briefing.items.filter(item => !['hidden', 'never'].includes(item.visibility_mode)).map(item => (
+                <BriefingItemCard
+                  key={item.id}
+                  item={item}
+                  onHide={hideBriefingItem}
+                  onSourcePress={['interaction', 'action_item', 'recommendation'].includes(item.source_object_type ?? '') ? openBriefingSource : undefined}
+                />
+              ))}
+            </View>
+            {briefingHistory.length > 1 ? (
+              <View style={styles.historySection}>
+                <Text style={[styles.historyLabel, { color: colors.textSecondary }]}>Earlier briefings</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyRow}>
+                  {briefingHistory.filter(item => item.id !== briefing.id).map(item => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[styles.historyChip, { borderColor: colors.surfaceBorder }]}
+                      onPress={() => { setBriefing(item); setBriefingSource(item.model_name.includes('claude') ? 'anthropic' : 'fallback'); }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open briefing from ${new Date(item.created_at).toLocaleString()}`}
+                    >
+                      <Text style={[styles.historyChipText, { color: colors.textSecondary }]}>{new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -1009,6 +1141,17 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '600', marginBottom: 8 },
   briefingHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 8 },
   briefingMeta: { fontSize: 12 },
+  briefingSummary: { fontSize: 12, lineHeight: 18, marginBottom: 12 },
+  regenerateButton: { minHeight: 44, borderWidth: 1, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 12 },
+  regenerateText: { fontSize: 12, fontWeight: '800' },
+  privacyNotice: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 12 },
+  privacyNoticeText: { fontSize: 12, lineHeight: 18 },
+  briefingItems: { gap: 9 },
+  historySection: { marginTop: 16 },
+  historyLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  historyRow: { gap: 8, paddingRight: 8 },
+  historyChip: { minHeight: 44, borderWidth: 1, borderRadius: 999, justifyContent: 'center', paddingHorizontal: 12 },
+  historyChipText: { fontSize: 11, fontWeight: '700' },
   tierRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tierChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
   tierChipText: { fontSize: 11, fontWeight: '600' },
