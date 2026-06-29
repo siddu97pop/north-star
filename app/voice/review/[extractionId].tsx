@@ -193,7 +193,7 @@ export default function ExtractionReviewScreen() {
       action_item_id: actionId,
       reminder_type: 'action',
       reminder_title: sensitive ? 'You have a private follow-up' : title,
-      reminder_body_safe: sensitive ? 'Open Life OS to review the details.' : 'A commitment you confirmed is coming up.',
+      reminder_body_safe: sensitive ? 'Open North Star to review the details.' : 'A commitment you confirmed is coming up.',
       scheduled_for: scheduledFor.toISOString(),
       cadence_rule: reminderPolicy === 'minimal' ? 'weekly_review' : 'one_time',
       state: suppressed ? 'suppressed' : 'suggested',

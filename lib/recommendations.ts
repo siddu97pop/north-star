@@ -73,7 +73,7 @@ export async function acceptRecommendation(recommendation: Recommendation, owner
       reminder_title: recommendation.sensitivity_level === 'none_low'
         ? recommendation.recommendation_title
         : 'You have a private milestone to review',
-      reminder_body_safe: 'Open Life OS to review a suggestion you accepted.',
+      reminder_body_safe: 'Open North Star to review a suggestion you accepted.',
       scheduled_for: recommendation.expires_at,
       cadence_rule: 'one_time',
       state: 'scheduled',

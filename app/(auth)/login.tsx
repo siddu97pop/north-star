@@ -44,7 +44,7 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.inner}>
-        <Text style={[styles.logo, { color: brand.primary }]}>Life OS</Text>
+        <Text style={[styles.logo, { color: brand.primary }]}>North Star</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Sign in to continue
         </Text>

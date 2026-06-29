@@ -54,7 +54,7 @@ export default function ExportScreen() {
     try {
       const result = await requestDataExport({ scope, includeSensitive }, session);
       const json = JSON.stringify(result.export, null, 2);
-      const fileName = `lifeos-export-${new Date().toISOString().slice(0, 10)}.json`;
+      const fileName = `northstar-export-${new Date().toISOString().slice(0, 10)}.json`;
       const file = new File('file:///tmp/', fileName);
       file.create();
       file.write(json);
@@ -63,7 +63,7 @@ export default function ExportScreen() {
 
       const tableCount = Object.keys(result.export.data).length;
       try {
-        await Share.share({ message: `Life OS export (${tableCount} tables):\n\n${json.slice(0, 500)}...`, title: fileName });
+        await Share.share({ message: `North Star export (${tableCount} tables):\n\n${json.slice(0, 500)}...`, title: fileName });
       } catch {
         Alert.alert('Export Complete', `${tableCount} tables exported. File saved to ${fileName}.`);
       }
@@ -81,7 +81,7 @@ export default function ExportScreen() {
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
         <Text style={[styles.cardTitle, { color: colors.text }]}>Export Your Data</Text>
         <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
-          Download a complete JSON copy of your Life OS data. You own your data — export it anytime.
+          Download a complete JSON copy of your North Star data. You own your data — export it anytime.
         </Text>
       </View>
 

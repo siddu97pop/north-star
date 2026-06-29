@@ -220,7 +220,7 @@ export default function TodayScreen() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />}
     >
       <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-        <Text style={[styles.heroEyebrow, { color: brand.primaryLight }]}>Life OS</Text>
+        <Text style={[styles.heroEyebrow, { color: brand.primaryLight }]}>North Star</Text>
         <Text style={[styles.heroTitle, { color: colors.text }]}>
           {profile?.display_name ? `Good to see you, ${profile.display_name}` : 'Your day at a glance'}
         </Text>

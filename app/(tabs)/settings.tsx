@@ -306,7 +306,7 @@ export default function SettingsScreen() {
   async function handleShareApp() {
     const joinUrl = `${API_URL}/join`;
     await Share.share({
-      message: `Join Life OS — sign up here: ${joinUrl}`,
+      message: `Join North Star — sign up here: ${joinUrl}`,
       url: joinUrl,
     });
   }
@@ -410,7 +410,7 @@ export default function SettingsScreen() {
         <TouchableOpacity style={styles.menuRow} onPress={handleShareApp}>
           <Text style={styles.menuIcon}>🔗</Text>
           <View style={styles.menuInfo}>
-            <Text style={[styles.menuLabel, { color: colors.text }]}>Share Life OS</Text>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>Share North Star</Text>
             <Text style={[styles.menuSub, { color: colors.textSecondary }]}>Invite someone to try the app</Text>
           </View>
           <Text style={[styles.chevron, { color: colors.textSecondary }]}>›</Text>
@@ -670,7 +670,7 @@ export default function SettingsScreen() {
         <View style={styles.menuRow}>
           <Text style={styles.menuIcon}>📱</Text>
           <View style={styles.menuInfo}>
-            <Text style={[styles.menuLabel, { color: colors.text }]}>Life OS</Text>
+            <Text style={[styles.menuLabel, { color: colors.text }]}>North Star</Text>
             <Text style={[styles.menuSub, { color: colors.textSecondary }]}>v1.0.0 · Companion: {API_URL ? 'Connected' : 'Not configured'}</Text>
           </View>
         </View>
