@@ -236,6 +236,78 @@ export interface PersonPreferences {
   updated_at: string;
 }
 
+export type ActionType =
+  | 'explicit_promise' | 'received_commitment' | 'scheduled_next_step'
+  | 'professional_deliverable' | 'emotional_checkin' | 'milestone_followup'
+  | 'relationship_maintenance' | 'repair_followup' | 'appreciation_gratitude'
+  | 'introduction_obligation' | 'learning_continuation' | 'no_action_memory';
+export type CommitmentCertainty = 'c5_explicit' | 'c4_agreed' | 'c3_implied' | 'c2_weak' | 'c1_low';
+export type ActionStatus =
+  | 'suggested' | 'accepted' | 'active' | 'snoozed' | 'deferred'
+  | 'blocked' | 'completed' | 'dismissed' | 'no_longer_relevant';
+
+export interface ActionItem {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  source_interaction_id: string | null;
+  source_extraction_id: string | null;
+  action_type: ActionType;
+  title: string;
+  description: string | null;
+  commitment_certainty: CommitmentCertainty | null;
+  owner_type: 'user' | 'other_person' | 'shared';
+  due_at: string | null;
+  sensitivity_level: SensitivityLevel;
+  confirmation_status: ConfirmationStatus;
+  status: ActionStatus;
+  created_by: 'user' | 'ai' | 'system';
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  deleted_at: string | null;
+  person?: Pick<Person, 'id' | 'name'> | null;
+}
+
+export interface Reminder {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  action_item_id: string | null;
+  milestone_id: string | null;
+  reminder_type: 'action' | 'milestone' | 'care_checkin' | 'briefing' | 'review';
+  reminder_title: string;
+  reminder_body_safe: string | null;
+  scheduled_for: string | null;
+  cadence_rule: string | null;
+  state: 'suggested' | 'accepted' | 'scheduled' | 'active' | 'snoozed' | 'deferred' | 'done' | 'dismissed' | 'suppressed';
+  snoozed_until: string | null;
+  sensitivity_level: SensitivityLevel;
+  user_confirmed_cadence: boolean;
+  created_by: 'user' | 'ai' | 'system';
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface Milestone {
+  id: string;
+  person_id: string;
+  owner_id: string;
+  source_interaction_id: string | null;
+  source_extraction_id: string | null;
+  milestone_type: string;
+  milestone_title: string;
+  milestone_date: string | null;
+  recurrence_rule: string | null;
+  sensitivity_level: SensitivityLevel;
+  confirmation_status: ConfirmationStatus;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
 export interface Interaction {
   id: string;
   owner_id: string;

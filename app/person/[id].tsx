@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   ScrollView,
   StyleSheet,
@@ -19,13 +20,17 @@ import Colors, { brand } from '@/constants/Colors';
 import CategoryPicker from '@/components/CategoryPicker';
 import FunctionPicker from '@/components/FunctionPicker';
 import SensitiveMemoryCard from '@/components/SensitiveMemoryCard';
+import ActionItemCard from '@/components/ActionItemCard';
 import type {
+  ActionItem,
+  ActionStatus,
   CalendarEvent,
   CategoryAssignment,
   CategoryDomain,
   AttentionTier,
   FunctionType,
   Interaction,
+  Milestone,
   Person,
   PersonPreferences,
   RelationshipFunction,
@@ -55,9 +60,12 @@ export default function PersonDetail() {
   const [functions, setFunctions] = useState<RelationshipFunction[]>([]);
   const [sensitiveMemories, setSensitiveMemories] = useState<SensitiveMemory[]>([]);
   const [preferences, setPreferences] = useState<PersonPreferences | null>(null);
+  const [actions, setActions] = useState<ActionItem[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showMilestone, setShowMilestone] = useState(false);
   const [briefing, setBriefing] = useState<string | null>(null);
   const [briefingSource, setBriefingSource] = useState<'anthropic' | 'fallback' | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -69,6 +77,9 @@ export default function PersonDetail() {
   const [editLinkedin, setEditLinkedin] = useState('');
   const [editRoleTitle, setEditRoleTitle] = useState('');
   const [editSummary, setEditSummary] = useState('');
+  const [milestoneTitle, setMilestoneTitle] = useState('');
+  const [milestoneType, setMilestoneType] = useState('custom');
+  const [milestoneDate, setMilestoneDate] = useState('');
 
   const loadPerson = useCallback(async () => {
     const personRes = await supabase.from('lifeos_people').select('*').eq('id', id).single();
@@ -83,7 +94,7 @@ export default function PersonDetail() {
       setEditRoleTitle(personRes.data.primary_role_title ?? '');
       setEditSummary(personRes.data.profile_summary_user ?? '');
 
-      const [interactionRes, attendeeRes, catRes, funcRes, sensRes, prefsRes] = await Promise.all([
+      const [interactionRes, attendeeRes, catRes, funcRes, sensRes, prefsRes, actionsRes, milestonesRes] = await Promise.all([
         supabase
           .from('lifeos_interactions')
           .select('*')
@@ -124,6 +135,20 @@ export default function PersonDetail() {
           .select('*')
           .eq('person_id', id)
           .single(),
+        supabase
+          .from('lifeos_action_items')
+          .select('*, person:lifeos_people(id,name)')
+          .eq('person_id', id)
+          .in('status', ['suggested', 'accepted', 'active', 'snoozed', 'deferred', 'blocked'])
+          .is('deleted_at', null)
+          .order('due_at', { ascending: true, nullsFirst: false }),
+        supabase
+          .from('lifeos_milestones')
+          .select('*')
+          .eq('person_id', id)
+          .eq('confirmation_status', 'confirmed')
+          .is('deleted_at', null)
+          .order('milestone_date', { ascending: true, nullsFirst: false }),
       ]);
 
       if (interactionRes.data) setInteractions(interactionRes.data);
@@ -131,6 +156,8 @@ export default function PersonDetail() {
       if (funcRes.data) setFunctions(funcRes.data);
       if (sensRes.data) setSensitiveMemories(sensRes.data);
       if (prefsRes.data) setPreferences(prefsRes.data);
+      if (actionsRes.data) setActions(actionsRes.data as ActionItem[]);
+      if (milestonesRes.data) setMilestones(milestonesRes.data as Milestone[]);
 
       const eventIds = (attendeeRes.data ?? []).map((item) => item.event_id);
 
@@ -298,6 +325,69 @@ export default function PersonDetail() {
     }
   }
 
+  async function handleActionStatus(item: ActionItem, status: ActionStatus) {
+    const now = new Date();
+    const due = new Date(now);
+    if (status === 'snoozed') due.setDate(now.getDate() + 1);
+    if (status === 'deferred') due.setDate(now.getDate() + 7);
+    const update = {
+      status,
+      due_at: status === 'snoozed' || status === 'deferred' ? due.toISOString() : item.due_at,
+      completed_at: status === 'completed' ? now.toISOString() : null,
+      updated_at: now.toISOString(),
+    };
+    const { error } = await supabase.from('lifeos_action_items').update(update).eq('id', item.id);
+    if (error) {
+      Alert.alert('Could not update action', error.message);
+      return;
+    }
+    const reminderState = status === 'completed' ? 'done' : status === 'dismissed' ? 'dismissed' : status;
+    await supabase.from('lifeos_reminders').update({
+      state: reminderState,
+      snoozed_until: status === 'snoozed' || status === 'deferred' ? due.toISOString() : null,
+      completed_at: status === 'completed' ? now.toISOString() : null,
+      updated_at: now.toISOString(),
+    }).eq('action_item_id', item.id);
+    setActions(prev => prev
+      .map(current => current.id === item.id ? { ...current, ...update } as ActionItem : current)
+      .filter(current => !['completed', 'dismissed', 'no_longer_relevant'].includes(current.status)));
+  }
+
+  async function handleAddMilestone() {
+    if (!user || !person || !milestoneTitle.trim()) return;
+    if (milestoneDate && !/^\d{4}-\d{2}-\d{2}$/.test(milestoneDate)) {
+      Alert.alert('Check the date', 'Use YYYY-MM-DD, or leave it blank.');
+      return;
+    }
+    const { data, error } = await supabase.from('lifeos_milestones').insert({
+      owner_id: user.id,
+      person_id: person.id,
+      milestone_type: milestoneType.trim() || 'custom',
+      milestone_title: milestoneTitle.trim(),
+      milestone_date: milestoneDate || null,
+      sensitivity_level: 'none_low',
+      confirmation_status: 'confirmed',
+    }).select('*').single();
+    if (error) {
+      Alert.alert('Could not save milestone', error.message);
+      return;
+    }
+    if (data) setMilestones(prev => [...prev, data as Milestone].sort((a, b) =>
+      (a.milestone_date ?? '9999').localeCompare(b.milestone_date ?? '9999')));
+    await supabase.from('lifeos_audit_events').insert({
+      owner_id: user.id,
+      actor_type: 'user',
+      event_type: 'milestone_created',
+      object_type: 'milestone',
+      object_id: data?.id,
+      event_summary: 'User created a milestone',
+    });
+    setMilestoneTitle('');
+    setMilestoneType('custom');
+    setMilestoneDate('');
+    setShowMilestone(false);
+  }
+
   if (loading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
@@ -456,6 +546,38 @@ export default function PersonDetail() {
             <Text style={[styles.prefsArrow, { color: colors.textSecondary }]}>›</Text>
           </View>
         </TouchableOpacity>
+
+        {/* Open Actions */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Open Actions</Text>
+            <TouchableOpacity onPress={() => router.push('/actions')}><Text style={[styles.sectionLink, { color: brand.primaryLight }]}>View all</Text></TouchableOpacity>
+          </View>
+          <View style={styles.embeddedList}>
+            {actions.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>No open commitments</Text> : actions.slice(0, 3).map(action => (
+              <ActionItemCard key={action.id} item={action} onStatusChange={handleActionStatus} compact />
+            ))}
+          </View>
+        </View>
+
+        {/* Milestones */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Milestones</Text>
+            <TouchableOpacity onPress={() => setShowMilestone(true)}><Text style={[styles.sectionLink, { color: brand.primaryLight }]}>+ Add</Text></TouchableOpacity>
+          </View>
+          {milestones.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>No milestones saved</Text> : milestones.map(milestone => (
+            <View key={milestone.id} style={styles.milestoneRow}>
+              <Text style={styles.milestoneIcon}>🎯</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.inlineTitle, { color: colors.text }]}>{milestone.milestone_title}</Text>
+                <Text style={[styles.inlineMeta, { color: colors.textSecondary }]}>
+                  {milestone.milestone_type.replace(/_/g, ' ')}{milestone.milestone_date ? ` · ${new Date(`${milestone.milestone_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
 
         {upcomingEvents.length > 0 ? (
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -618,6 +740,24 @@ export default function PersonDetail() {
           </ScrollView>
         </View>
       </Modal>
+
+      <Modal visible={showMilestone} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.milestoneModal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Milestone</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Title</Text>
+            <TextInput style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]} value={milestoneTitle} onChangeText={setMilestoneTitle} placeholder="e.g. Promotion anniversary" placeholderTextColor={colors.textSecondary} />
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Type</Text>
+            <TextInput style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]} value={milestoneType} onChangeText={setMilestoneType} placeholder="birthday, promotion, move..." placeholderTextColor={colors.textSecondary} autoCapitalize="none" />
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Date (optional)</Text>
+            <TextInput style={[styles.input, { color: colors.text, borderColor: colors.surfaceBorder }]} value={milestoneDate} onChangeText={setMilestoneDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.textSecondary} keyboardType="numbers-and-punctuation" />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { borderColor: colors.surfaceBorder, borderWidth: 1 }]} onPress={() => setShowMilestone(false)}><Text style={{ color: colors.text }}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: brand.primary }]} onPress={handleAddMilestone}><Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text></TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -672,4 +812,10 @@ const styles = StyleSheet.create({
   prefsRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   prefsMeta: { fontSize: 12, marginTop: 2 },
   prefsArrow: { fontSize: 22, fontWeight: '300' },
+  sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  sectionLink: { fontSize: 12, fontWeight: '700' },
+  embeddedList: { gap: 8 },
+  milestoneRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 8 },
+  milestoneIcon: { fontSize: 17 },
+  milestoneModal: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
 });

@@ -13,7 +13,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { brand } from '@/constants/Colors';
-import type { CalendarEvent, InteractionStat, VoiceNote } from '@/lib/types';
+import ActionItemCard from '@/components/ActionItemCard';
+import type { ActionItem, CalendarEvent, VoiceNote } from '@/lib/types';
 
 export default function TodayScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
@@ -24,7 +25,7 @@ export default function TodayScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [notes, setNotes] = useState<VoiceNote[]>([]);
-  const [stats, setStats] = useState<InteractionStat[]>([]);
+  const [actions, setActions] = useState<ActionItem[]>([]);
   const [pendingReviews, setPendingReviews] = useState(0);
 
   const loadDashboard = useCallback(async () => {
@@ -34,7 +35,7 @@ export default function TodayScreen() {
     const weekAhead = new Date();
     weekAhead.setDate(now.getDate() + 7);
 
-    const [eventsRes, notesRes, statsRes, pendingRes] = await Promise.all([
+    const [eventsRes, notesRes, actionsRes, pendingRes] = await Promise.all([
       supabase
         .from('lifeos_events')
         .select('*')
@@ -48,11 +49,14 @@ export default function TodayScreen() {
         .order('created_at', { ascending: false })
         .limit(5),
       supabase
-        .from('lifeos_v_interaction_stats')
-        .select('*')
+        .from('lifeos_action_items')
+        .select('*, person:lifeos_people(id,name)')
         .eq('owner_id', user.id)
-        .order('this_month', { ascending: false })
-        .limit(5),
+        .in('commitment_certainty', ['c5_explicit', 'c4_agreed'])
+        .in('status', ['accepted', 'active', 'snoozed', 'deferred', 'blocked'])
+        .is('deleted_at', null)
+        .order('due_at', { ascending: true, nullsFirst: false })
+        .limit(6),
       supabase
         .from('lifeos_interaction_extractions')
         .select('id', { count: 'exact', head: true })
@@ -62,7 +66,7 @@ export default function TodayScreen() {
 
     if (eventsRes.data) setEvents(eventsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
-    if (statsRes.data) setStats(statsRes.data);
+    if (actionsRes.data) setActions(actionsRes.data as ActionItem[]);
     setPendingReviews(pendingRes.count ?? 0);
     setLoading(false);
   }, [user]);
@@ -102,9 +106,7 @@ export default function TodayScreen() {
     );
   }
 
-  const completedNotes = notes.filter((note) => note.status === 'complete').length;
   const upcomingCount = events.length;
-  const peopleTouched = stats.filter((item) => item.this_week > 0).length;
 
   return (
     <ScrollView
@@ -118,22 +120,22 @@ export default function TodayScreen() {
           {profile?.display_name ? `Good to see you, ${profile.display_name}` : 'Your day at a glance'}
         </Text>
         <Text style={[styles.heroBody, { color: colors.textSecondary }]}>
-          Keep the calendar moving, capture conversations, and head into meetings with context.
+          A calm view of promises, conversations, and notes that deserve your attention.
         </Text>
       </View>
 
       <View style={styles.metricRow}>
         <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-          <Text style={[styles.metricValue, { color: brand.primaryLight }]}>{upcomingCount}</Text>
-          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Next 7 Days</Text>
+          <Text style={[styles.metricValue, { color: brand.primaryLight }]}>{actions.length}</Text>
+          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Commitments</Text>
         </View>
         <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-          <Text style={[styles.metricValue, { color: brand.accent }]}>{completedNotes}</Text>
-          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Ready Notes</Text>
+          <Text style={[styles.metricValue, { color: brand.accent }]}>{upcomingCount}</Text>
+          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Conversations</Text>
         </View>
         <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-          <Text style={[styles.metricValue, { color: brand.warning }]}>{peopleTouched}</Text>
-          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>People This Week</Text>
+          <Text style={[styles.metricValue, { color: brand.warning }]}>{pendingReviews}</Text>
+          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>To Review</Text>
         </View>
       </View>
 
@@ -158,14 +160,21 @@ export default function TodayScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.quickBtn, styles.quickBtnSecondary, { borderColor: colors.surfaceBorder }]}
-          onPress={() => router.push('/(tabs)/calendar')}
+          onPress={() => router.push('/actions')}
         >
-          <Text style={[styles.quickBtnTextSecondary, { color: colors.text }]}>Open Calendar</Text>
+          <Text style={[styles.quickBtnTextSecondary, { color: colors.text }]}>Action Center</Text>
         </TouchableOpacity>
       </View>
 
+      <SectionHeader title="Today's Commitments" action="View all" onPress={() => router.push('/actions')} colors={colors} />
+      <View style={styles.listGap}>
+        {actions.length === 0 ? (
+          <EmptyCard text="No explicit commitments are due. Low-confidence ideas stay in review instead of becoming pressure." colors={colors} />
+        ) : actions.map(action => <ActionItemCard key={action.id} item={action} compact />)}
+      </View>
+
       <SectionHeader
-        title="Upcoming Events"
+        title="Upcoming Conversations"
         action="View all"
         onPress={() => router.push('/(tabs)/calendar')}
         colors={colors}
@@ -230,33 +239,6 @@ export default function TodayScreen() {
         )}
       </View>
 
-      <SectionHeader title="People To Reconnect With" action="People" onPress={() => router.push('/(tabs)/people')} colors={colors} />
-      <View style={styles.listGap}>
-        {stats.length === 0 ? (
-          <EmptyCard text="As voice notes and events accumulate, your strongest relationships will surface here." colors={colors} />
-        ) : (
-          stats.map((stat) => (
-            <TouchableOpacity
-              key={stat.person_id}
-              style={[styles.cardRow, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
-              onPress={() => router.push(`/person/${stat.person_id}`)}
-            >
-              <View style={[styles.personBadge, { backgroundColor: brand.primaryLight + '22' }]}>
-                <Text style={[styles.personBadgeText, { color: brand.primaryLight }]}>
-                  {stat.person_name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>{stat.person_name}</Text>
-                <Text style={[styles.cardMeta, { color: colors.textSecondary }]}>
-                  {stat.this_month} interaction{stat.this_month === 1 ? '' : 's'} this month
-                  {stat.last_seen ? ` · last seen ${new Date(stat.last_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))
-        )}
-      </View>
     </ScrollView>
   );
 }
